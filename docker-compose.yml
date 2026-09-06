@@ -1,0 +1,47 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: sewa-entry-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sewa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sewa_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-sewa_entry}
+    ports:
+      # Exposed so `npm run dev` on the host can reach it. In production, drop
+      # this block and let only the api service talk to the database.
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - sewa_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-sewa} -d ${POSTGRES_DB:-sewa_entry}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sewa-entry-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4001
+      DATABASE_URL: postgres://${POSTGRES_USER:-sewa}:${POSTGRES_PASSWORD:-sewa_dev_password}@db:5432/${POSTGRES_DB:-sewa_entry}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set — generate one with: openssl rand -base64 48}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:4001}
+      REPORT_TIMEZONE: ${REPORT_TIMEZONE:-Asia/Kolkata}
+      SEWA_DAYS: ${SEWA_DAYS:-0,3}
+      TIME_ADJUST_TOLERANCE_MINUTES: ${TIME_ADJUST_TOLERANCE_MINUTES:-120}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-sewa@admin1}
+    ports:
+      - '${API_PORT:-4001}:4001'
+    # The API serves both the JSON endpoints and the built console, so this one
+    # port is the whole application.
+
+volumes:
+  sewa_db_data:

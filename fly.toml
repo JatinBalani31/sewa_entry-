@@ -1,0 +1,44 @@
+# Fly.io app configuration for Sewa Entry.
+#
+# This file describes HOW an existing Fly app is deployed; it does not create
+# the app itself. Follow DEPLOY.md for the one-time setup (fly apps create,
+# attaching Postgres, setting secrets) before the first `fly deploy` or before
+# the GitHub Actions workflow runs.
+#
+# `app` below is a placeholder — Fly app names are globally unique, so change
+# it to whatever name you actually create.
+app = "sewa-entry"
+primary_region = "bom" # Mumbai — closest to Asia/Kolkata; change to suit your sangat
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "4001"
+  # Everything else (DATABASE_URL, JWT_SECRET, SEED/BOOTSTRAP admin
+  # credentials, REPORT_TIMEZONE, SEWA_DAYS, ...) is set with
+  # `fly secrets set` rather than here, so it never sits in plain text in the
+  # repository. See DEPLOY.md.
+
+[http_service]
+  internal_port = 4001
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  # Sewa happens on two fixed days a week; if cost matters more than a cold
+  # start of a few seconds outside those windows, set this to 0 and
+  # auto_stop_machines to true instead — Fly will scale to zero between uses.
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -1,0 +1,39 @@
+name: CI
+
+# Runs on every pull request as a check, and is called by deploy.yml before
+# it ships to Fly.io — so a push straight to main is tested exactly once, not
+# twice, and a PR is never left unchecked.
+on:
+  workflow_call:
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            web/package-lock.json
+
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Run server test suite
+        working-directory: server
+        run: npm test
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build the console
+        working-directory: web
+        run: npm run build
