@@ -1,189 +1,171 @@
 # Deploying Sewa Entry
 
-This sets up: a persistent PostgreSQL database, the app running as a Docker
-container on Fly.io, and a GitHub Actions pipeline that tests every push and
-deploys automatically on merge to `main`.
+This sets up: a free, always-reachable PostgreSQL database (Neon), the app
+running as a Docker container on Render's free tier, and a GitHub Actions
+pipeline that tests every push and deploys automatically on merge to `main`.
 
-Everything here is a **one-time setup** you run yourself — it needs an
-interactive login to Fly and GitHub, which can't be done on your behalf. Once
-it's done, every future deploy is just `git push`.
+**No credit card required anywhere in this path.** (That's specifically why
+it's Render + Neon rather than Fly.io — Fly now requires a card on file even
+for free-tier usage.)
+
+Steps 1–5 below are one-time setup you do yourself, since they need an
+interactive sign-in to Neon, Render and GitHub. Once done, every future
+deploy is just `git push`.
+
+**Trade-off to know going in:** Render's free web service spins down after
+15 minutes with no traffic. The next request after that wakes it back up,
+which takes roughly 30–50 seconds. For a tool used twice a week for a few
+hours at a time, that's a non-issue — just don't expect it to feel instant on
+the very first tap of the day.
 
 ---
 
 ## 0. Prerequisites
 
-- A [Fly.io](https://fly.io) account (the free allowance covers this app —
-  it's small and only busy two days a week).
-- A GitHub repository for this project. If you haven't made one yet: create an
-  empty repo on github.com, then come back here.
+- A [Neon](https://neon.tech) account (free, no card).
+- A [Render](https://render.com) account (free, no card — sign up with GitHub
+  to make step 2 one click).
+- The GitHub repo already has the code pushed
+  ([JatinBalani31/sewa_entry-](https://github.com/JatinBalani31/sewa_entry-)).
 
 ---
 
-## 1. Install flyctl and log in
+## 1. Create the database on Neon
 
-```bash
-# macOS / Linux
-curl -L https://fly.io/install.sh | sh
+1. Sign up / sign in at [neon.tech](https://neon.tech).
+2. **Create a project.** Pick a region close to your sangat — Singapore
+   (`ap-southeast-1`) is the closest free-tier option to India.
+3. Neon shows a connection string immediately. Copy it — it looks like:
 
-# Windows (PowerShell)
-powershell -Command "iwr https://fly.io/install.ps1 -useb | iex"
-```
+   ```
+   postgresql://<user>:<password>@ep-something.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
+   ```
 
-```bash
-fly auth login
-```
+   Keep the `?sslmode=require` on the end. The app already knows how to use
+   it (`server/src/db/index.js` enables TLS automatically for any connection
+   string containing it).
 
-This opens a browser to sign in or create a Fly account.
-
----
-
-## 2. Create the app
-
-From the project root (where `fly.toml` already lives):
-
-```bash
-fly apps create sewa-entry
-```
-
-Fly app names are global — if `sewa-entry` is taken, pick another name, then
-open `fly.toml` and change the `app = "sewa-entry"` line at the top to match.
+That's the entire database setup. Neon's free tier auto-suspends the compute
+after inactivity and resumes it in well under a second on the next query —
+you won't notice it.
 
 ---
 
-## 3. Create the database and attach it
+## 2. Create the web service on Render
 
-```bash
-fly postgres create --name sewa-entry-db --region bom --vm-size shared-cpu-1x --volume-size 1
-```
-
-Pick a region close to where the app itself will run (`bom` = Mumbai, matching
-`fly.toml`'s `primary_region` — change both together if your sangat is
-elsewhere).
-
-```bash
-fly postgres attach sewa-entry-db --app sewa-entry
-```
-
-This sets a `DATABASE_URL` secret on the app automatically — nothing to copy
-by hand.
+1. Sign in at [render.com](https://render.com).
+2. **New +** → **Blueprint**.
+3. Connect your GitHub account if you haven't, and select the
+   `sewa_entry-` repository. Render reads `render.yaml` from the repo root
+   and shows one service: `sewa-entry`.
+4. Click **Apply**. Render creates the service. Its first deploy attempt will
+   fail — that's expected, the required secrets aren't set yet. Continue to
+   step 3.
 
 ---
 
-## 4. Set the remaining secrets
+## 3. Set the secrets
 
-```bash
-fly secrets set --app sewa-entry JWT_SECRET="$(openssl rand -base64 48)"
-```
+In the Render dashboard, open the **sewa-entry** service → **Environment**,
+and add:
 
-Then the app-specific settings — adjust to your sangat's actual schedule and
-timezone:
+| Key | Value |
+|---|---|
+| `DATABASE_URL` | The connection string from step 1 |
+| `JWT_SECRET` | A long random string — generate one with `openssl rand -base64 48`, or any password generator |
+| `BOOTSTRAP_ADMIN_ID` | e.g. `ADMIN1` |
+| `BOOTSTRAP_ADMIN_NAME` | Your name |
+| `BOOTSTRAP_ADMIN_PASSWORD` | A real password you'll actually use to sign in the first time |
 
-```bash
-fly secrets set --app sewa-entry \
-  REPORT_TIMEZONE="Asia/Kolkata" \
-  SEWA_DAYS="0,3" \
-  TIME_ADJUST_TOLERANCE_MINUTES="120" \
-  BOOTSTRAP_ADMIN_ID="ADMIN1" \
-  BOOTSTRAP_ADMIN_NAME="Your Name" \
-  BOOTSTRAP_ADMIN_PASSWORD="choose-a-real-password-here"
-```
-
-`BOOTSTRAP_ADMIN_PASSWORD` is what you'll actually sign in with the first
-time — the app creates exactly one administrator the first time it boots
-against an empty database (not the fake demo roster `npm run seed` makes;
-that's for trying the app out locally, not for production). Once you've
-signed in, change that password from the console and set it to something you
-won't need to remember from a deploy script.
-
-If you skip this step the app still boots — it falls back to
-`ADMIN1` / `sewa@admin1` — but change it immediately if you do, since that
-default is now written in this file.
+`BOOTSTRAP_ADMIN_PASSWORD` matters: the app creates exactly **one**
+administrator the first time it boots against an empty database — not the
+fake demo roster `npm run seed` makes locally (that's for trying the app out,
+not production). Sign in with it once, then change it from the console and
+forget the value in this table.
 
 ---
 
-## 5. First deploy, by hand
+## 4. First deploy, by hand
 
-Do the very first deploy directly, so you can watch it and fix anything before
-wiring up automatic deploys:
+Back on the service page: **Manual Deploy** → **Deploy latest commit**.
 
-```bash
-fly deploy --remote-only
+Watch the **Logs** tab. You're looking for:
+
+```
+[boot] No Sewadars found — created the first administrator.
+[boot]   Sign in as: ADMIN1 / <your password>
 ```
 
-Fly builds the Docker image on its own remote builder — you don't need Docker
-installed locally. When it finishes:
-
-```bash
-fly open
-```
-
-Sign in with the administrator credentials from step 4.
+Then open the service's URL (shown at the top of the Render dashboard,
+`https://sewa-entry-xxxx.onrender.com`) and sign in.
 
 ---
 
-## 6. Connect GitHub Actions
+## 5. Connect GitHub Actions
 
-Create a deploy token scoped to this one app:
-
-```bash
-fly tokens create deploy --app sewa-entry
-```
-
-Copy the printed token (it starts with `FlyV1 ...`). In your GitHub repo:
-
-**Settings → Secrets and variables → Actions → New repository secret**
-
-- Name: `FLY_API_TOKEN`
-- Value: the token you just copied
-
----
-
-## 7. Push
-
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin <your-github-repo-url>
-git push -u origin main
-```
+1. On the service page: **Settings** → **Deploy Hook**. Copy the URL shown
+   there (it's a one-off webhook, not an API key — safe to treat like a
+   normal secret, but it can't read anything, only trigger a deploy).
+2. In your GitHub repo: **Settings → Secrets and variables → Actions → New
+   repository secret**
+   - Name: `RENDER_DEPLOY_HOOK_URL`
+   - Value: the URL you just copied
 
 From here on: every push to `main` runs the test suite
-(`.github/workflows/ci.yml`) and, if it passes, deploys to Fly
-(`.github/workflows/deploy.yml`). A pull request runs the same tests as a
-check but never deploys — only a merge to `main` does.
-
-Watch a deploy from the command line if you want to:
+(`.github/workflows/ci.yml`) and, only if it passes, calls that hook
+(`.github/workflows/deploy.yml`), which tells Render to deploy. A pull
+request runs the same tests as a check but never deploys — only a merge to
+`main` does. This is also why `autoDeploy: false` is set in `render.yaml` —
+without it, Render would deploy every push itself, immediately, skipping the
+test gate entirely.
 
 ```bash
-fly logs --app sewa-entry
+git add .
+git commit -m "Your change"
+git push
 ```
+
+Watch a deploy from Render's **Logs** tab, or from GitHub's **Actions** tab
+on the repo.
 
 ---
 
 ## Everyday operations
 
-| Task | Command |
+| Task | Where |
 |---|---|
-| Tail production logs | `fly logs --app sewa-entry` |
-| Open a shell in the running container | `fly ssh console --app sewa-entry` |
-| Open a local tunnel to the production database | `fly proxy 5433:5432 --app sewa-entry-db` |
-| Scale to zero between sewa days (saves cost) | set `auto_stop_machines = true` and `min_machines_running = 0` in `fly.toml`, then `fly deploy` |
-| Roll back to the previous release | `fly releases --app sewa-entry` to list, then `fly deploy --image <previous image>` |
-| Change a secret | `fly secrets set --app sewa-entry KEY=value` (triggers a restart) |
+| Tail production logs | Render dashboard → sewa-entry → **Logs** |
+| Open a shell in the running container | Render dashboard → sewa-entry → **Shell** |
+| Browse the database directly | Neon dashboard → your project → **SQL Editor**, or any Postgres client with the connection string from step 1 |
+| Change a secret | Render dashboard → **Environment** → edit the value (triggers a restart) |
+| Roll back to a previous deploy | Render dashboard → sewa-entry → **Events** → find the earlier deploy → **Rollback to this deploy** |
+| Force a deploy without a code change | Render dashboard → **Manual Deploy** |
 
 ---
 
 ## What NOT to do
 
-- Don't put real secrets in `fly.toml` or `docker-compose.yml` — both are
-  committed to the repo. `fly secrets set` and `.env` (git-ignored) are the
-  only places credentials belong.
+- Don't put real secrets in `render.yaml` or `docker-compose.yml` — both are
+  committed to the repo. Render's **Environment** tab (`sync: false` in
+  `render.yaml`) and `.env` (git-ignored) are the only places credentials
+  belong.
 - Don't run `npm run seed` against the production database — it's full of
   fake demo Sewadars and is meant for trying the app out locally, where the
   in-memory database resets on every restart anyway.
+- Don't re-enable `autoDeploy: true` in `render.yaml` unless you're also
+  fine with untested code reaching production on every push — that setting
+  is what makes the GitHub Actions test gate meaningful.
 - Don't remove the `POSTGRES_PORT` mapping from `docker-compose.yml` only in
-  your head — if you ever run this stack on a VPS instead of Fly, actually
-  delete that line so the database isn't reachable from outside the container
-  network.
+  your head — that file is for local development / a self-hosted VPS, not
+  this Render+Neon path; if you ever do run it on a VPS, actually delete that
+  line so the database isn't reachable from outside the container network.
+
+---
+
+## If Render or Neon ever require a card too
+
+Platforms change their policies (this document exists because Fly.io just
+did). If that happens here, the app itself doesn't need to change — only
+`render.yaml` / `fly.toml`-equivalent config and this document would. The
+app already reads `DATABASE_URL` and `PORT` from the environment and has no
+platform-specific code in it.

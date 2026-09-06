@@ -1,0 +1,46 @@
+# Render Blueprint for Sewa Entry.
+#
+# This describes the web service only — the database is a free Neon Postgres
+# instance (external to Render), pointed at via the DATABASE_URL secret set
+# below. Follow DEPLOY.md for the one-time setup: creating the Neon project,
+# creating this Blueprint in Render, and setting the secret env vars.
+#
+# autoDeploy is off on purpose: a push to main only reaches production after
+# .github/workflows/deploy.yml has run the test suite and then called this
+# service's Deploy Hook. Render's own default (deploy every push immediately)
+# would skip that gate.
+services:
+  - type: web
+    name: sewa-entry
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    region: singapore # closest free-tier region to Asia/Kolkata
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "4001"
+      - key: REPORT_TIMEZONE
+        value: Asia/Kolkata
+      - key: SEWA_DAYS
+        value: "0,3"
+      - key: TIME_ADJUST_TOLERANCE_MINUTES
+        value: "120"
+      - key: BACKFILL_DAYS
+        value: "14"
+      # Everything below is a secret: set once in the Render dashboard
+      # (Settings → Environment) rather than committed here.
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: BOOTSTRAP_ADMIN_ID
+        sync: false
+      - key: BOOTSTRAP_ADMIN_NAME
+        sync: false
+      - key: BOOTSTRAP_ADMIN_PASSWORD
+        sync: false

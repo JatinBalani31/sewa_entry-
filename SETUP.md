@@ -338,5 +338,6 @@ following followed from that:
 - [ ] Remove the `POSTGRES_PORT` mapping from `docker-compose.yml` so the
       database is not reachable from outside the container network.
 
-**Deploying to Fly.io with GitHub Actions doing the pushing?** See
-[DEPLOY.md](DEPLOY.md) for the full one-time setup and the CI/CD pipeline.
+**Deploying for free, with GitHub Actions doing the pushing?** See
+[DEPLOY.md](DEPLOY.md) for the full one-time setup (Render + Neon, no card
+required) and the CI/CD pipeline.

@@ -1,14 +1,19 @@
-name: Deploy to Fly.io
+name: Deploy to Render
 
 # Runs the full test suite (via ci.yml) on every push to main, and only ships
-# to production if it passes. Requires the one-time Fly.io setup in
-# DEPLOY.md, plus a FLY_API_TOKEN repository secret.
+# to production if it passes. Requires the one-time Render + Neon setup in
+# DEPLOY.md, plus a RENDER_DEPLOY_HOOK_URL repository secret.
+#
+# Render's own "auto-deploy on push" is turned off in render.yaml on purpose
+# — without that, Render would deploy every push immediately, skipping this
+# test gate entirely. Instead, this workflow calls Render's Deploy Hook (a
+# one-off webhook URL, not an API key) only after the test job succeeds.
 on:
   push:
     branches: [main]
 
 # Never let two deploys race each other; a second push while one is still
-# rolling out waits its turn instead of deploying concurrently.
+# rolling out waits its turn instead of triggering a second deploy on top.
 concurrency:
   group: production-deploy
   cancel-in-progress: false
@@ -21,11 +26,13 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-
-      - name: Deploy
-        run: flyctl deploy --remote-only
+      - name: Trigger Render deploy
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$RENDER_DEPLOY_HOOK_URL")
+          if [ "$status" -ge 300 ]; then
+            echo "Render deploy hook returned HTTP $status"
+            exit 1
+          fi
+          echo "Deploy triggered (HTTP $status). Watch progress in the Render dashboard."
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}

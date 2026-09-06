@@ -25,6 +25,30 @@ async function createMemoryPool() {
   return new adapter.Pool();
 }
 
+/**
+ * node-postgres does not reliably negotiate TLS from a `?sslmode=require` in
+ * the connection string alone — behaviour has varied across versions, so an
+ * explicit `ssl` option is the only dependable way to get it. Managed
+ * Postgres providers (Neon, Supabase, Render's own Postgres, ...) put
+ * `sslmode=require` in the URL and terminate TLS with a certificate chain
+ * Node does not always fully validate, hence `rejectUnauthorized: false`
+ * here — the connection is still encrypted, just not pinned to a CA.
+ *
+ * A local `docker-compose` Postgres carries no such parameter and has no TLS
+ * configured at all, so it is left alone: requesting SSL against a server
+ * that does not support it fails outright rather than falling back.
+ */
+export function poolOptions(connectionString) {
+  const wantsSsl = /\bsslmode=require\b|\bssl=true\b/i.test(connectionString);
+  return {
+    connectionString,
+    max: 10,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+    ...(wantsSsl ? { ssl: { rejectUnauthorized: false } } : {}),
+  };
+}
+
 export async function getPool() {
   if (pool) return pool;
 
@@ -32,12 +56,7 @@ export async function getPool() {
     pool = await createMemoryPool();
     console.warn('[db] Using in-memory PostgreSQL emulation — data resets on restart.');
   } else {
-    pool = new pg.Pool({
-      connectionString: config.databaseUrl,
-      max: 10,
-      idleTimeoutMillis: 30_000,
-      connectionTimeoutMillis: 10_000,
-    });
+    pool = new pg.Pool(poolOptions(config.databaseUrl));
     pool.on('error', (err) => console.error('[db] idle client error', err));
   }
   return pool;

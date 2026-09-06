@@ -1,7 +1,7 @@
 name: CI
 
 # Runs on every pull request as a check, and is called by deploy.yml before
-# it ships to Fly.io — so a push straight to main is tested exactly once, not
+# it ships to Render — so a push straight to main is tested exactly once, not
 # twice, and a PR is never left unchecked.
 on:
   workflow_call:
