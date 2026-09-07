@@ -43,6 +43,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.sewaentry.tablet.data.DayFilter
+import org.sewaentry.tablet.data.DepartmentGroup
+import org.sewaentry.tablet.data.Quarter
 import org.sewaentry.tablet.data.ReportPeriod
 import org.sewaentry.tablet.data.SewaDays
 import org.sewaentry.tablet.data.SewadarTotals
@@ -59,6 +61,7 @@ import java.time.LocalDate
 @Composable
 fun StatsScreen(vm: RegisterViewModel) {
     val state by vm.report.collectAsState()
+    val quarter by vm.quarter.collectAsState()
     val from by vm.from.collectAsState()
     val to by vm.to.collectAsState()
     val dayFilter by vm.dayFilter.collectAsState()
@@ -70,9 +73,15 @@ fun StatsScreen(vm: RegisterViewModel) {
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Sewadar hours", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Ink)
                 Text(
-                    "${SewaDays.format(from)} to ${SewaDays.format(to)} - ${dayFilter.label} - ${period.label}",
+                    "Quarterly summary - ${quarter.label}",
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                )
+                Text(
+                    "${quarter.monthsLabel} - ${state.sewaDates.size} sewa days recorded" +
+                        if (dayFilter != org.sewaentry.tablet.data.DayFilter.ALL) " - ${dayFilter.label}" else "",
                     fontSize = 14.sp,
                     color = InkMuted,
                 )
@@ -99,12 +108,21 @@ fun StatsScreen(vm: RegisterViewModel) {
             modifier = Modifier.fillMaxWidth(),
         ) {
             Column(Modifier.padding(16.dp)) {
-                FilterRow("Range") {
-                    RangeChip("1 month", from == LocalDate.now().minusMonths(1)) {
-                        vm.setRange(LocalDate.now().minusMonths(1), LocalDate.now())
-                    }
-                    RangeChip("3 months", from == LocalDate.now().minusMonths(3)) {
-                        vm.setRange(LocalDate.now().minusMonths(3), LocalDate.now())
+                // The quarter is the primary control: picking one sets the
+                // whole reporting period, because "the Q3 summary" is the
+                // thing being produced.
+                FilterRow("Quarter") {
+                    QuarterStepper(
+                        quarter = quarter,
+                        onSelect = vm::selectQuarter,
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                FilterRow("Or a range") {
+                    RangeChip("This month", from == LocalDate.now().withDayOfMonth(1)) {
+                        vm.setRange(LocalDate.now().withDayOfMonth(1), LocalDate.now())
                     }
                     RangeChip("6 months", from == LocalDate.now().minusMonths(6)) {
                         vm.setRange(LocalDate.now().minusMonths(6), LocalDate.now())
@@ -176,8 +194,22 @@ fun StatsScreen(vm: RegisterViewModel) {
                     if (state.totals.isEmpty()) {
                         EmptyState(state.loading)
                     } else {
+                        // Department by department with a subtotal under each —
+                        // the shape of the summary that used to be typed up by
+                        // hand, so it is recognisable to whoever checks it.
                         LazyColumn {
-                            items(state.totals, key = { it.sewadarId }) { TotalsRow(it) }
+                            state.departments.forEach { group ->
+                                item(key = "head-${group.departmentName}") {
+                                    DepartmentHeading(group.departmentName)
+                                }
+                                items(group.sewadars, key = { it.sewadarId }) { TotalsRow(it) }
+                                item(key = "sub-${group.departmentName}") {
+                                    DepartmentSubtotal(group)
+                                }
+                            }
+                            if (state.departments.size > 1) {
+                                item(key = "grand") { GrandTotal(state.departments) }
+                            }
                         }
                     }
                 }
@@ -199,6 +231,75 @@ private fun FilterRow(label: String, content: @Composable () -> Unit) {
             color = InkMuted,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { content() }
+    }
+}
+
+/** Year stepper plus the four quarters — two taps to any summary. */
+@Composable
+private fun QuarterStepper(quarter: Quarter, onSelect: (Quarter) -> Unit) {
+    val thisQuarter = Quarter.current()
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Button(
+            onClick = { onSelect(Quarter(quarter.year - 1, quarter.quarter)) },
+            shape = RoundedCornerShape(999.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = SurfaceAlt, contentColor = Navy),
+            contentPadding = PaddingValues(horizontal = 14.dp),
+            modifier = Modifier.height(50.dp),
+        ) { Text("<", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+
+        Text(
+            quarter.year.toString(),
+            Modifier.padding(horizontal = 14.dp),
+            fontSize = 19.sp,
+            fontWeight = FontWeight.Bold,
+            color = Ink,
+        )
+
+        Button(
+            onClick = { onSelect(Quarter(quarter.year + 1, quarter.quarter)) },
+            shape = RoundedCornerShape(999.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = SurfaceAlt, contentColor = Navy),
+            contentPadding = PaddingValues(horizontal = 14.dp),
+            // A quarter that has not started yet has nothing to summarise.
+            enabled = quarter.year < thisQuarter.year,
+            modifier = Modifier.height(50.dp),
+        ) { Text(">", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+
+        Spacer(Modifier.width(16.dp))
+
+        (1..4).forEach { q ->
+            val candidate = Quarter(quarter.year, q)
+            val future = candidate.start.isAfter(LocalDate.now())
+            Row {
+                Button(
+                    onClick = { onSelect(candidate) },
+                    enabled = !future,
+                    shape = RoundedCornerShape(999.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (quarter.quarter == q) Navy else SurfaceAlt,
+                        contentColor = if (quarter.quarter == q) Color.White else InkMuted,
+                        disabledContainerColor = SurfaceAlt,
+                        disabledContentColor = Line,
+                    ),
+                    contentPadding = PaddingValues(horizontal = 22.dp),
+                    modifier = Modifier.height(50.dp),
+                ) {
+                    Text("Q$q", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(8.dp))
+            }
+        }
+
+        if (quarter != thisQuarter) {
+            Button(
+                onClick = { onSelect(thisQuarter) },
+                shape = RoundedCornerShape(999.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = ArrivalGreenBg, contentColor = ArrivalGreen),
+                contentPadding = PaddingValues(horizontal = 18.dp),
+                modifier = Modifier.height(50.dp),
+            ) { Text("This quarter", fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
+        }
     }
 }
 
@@ -284,6 +385,89 @@ private fun TotalsHeader() {
 @Composable
 private fun HeaderCell(text: String, modifier: Modifier) {
     Text(text.uppercase(), modifier, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = InkMuted)
+}
+
+@Composable
+private fun DepartmentHeading(name: String) {
+    Row(
+        Modifier.fillMaxWidth().background(Background).padding(horizontal = 18.dp, vertical = 10.dp),
+    ) {
+        Text(name.uppercase(), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Navy)
+    }
+}
+
+@Composable
+private fun DepartmentSubtotal(group: DepartmentGroup) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(SurfaceAlt)
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "${group.departmentName} total",
+            Modifier.weight(2.2f),
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            color = Ink,
+        )
+        Text(
+            "${group.activeCount} active",
+            Modifier.weight(1.4f),
+            fontSize = 13.sp,
+            color = InkMuted,
+        )
+        Text(group.daysAttended.toString(), Modifier.weight(0.8f), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Text(group.daysComplete.toString(), Modifier.weight(1f), fontSize = 15.sp, color = Ink)
+        Text(
+            String.format("%.1f", group.hours),
+            Modifier.weight(1f),
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold,
+            color = Navy,
+        )
+        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.weight(1.2f))
+    }
+}
+
+@Composable
+private fun GrandTotal(groups: List<DepartmentGroup>) {
+    Row(
+        Modifier.fillMaxWidth().background(Navy).padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("GRAND TOTAL", Modifier.weight(2.2f), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+        Text(
+            "${groups.sumOf { it.activeCount }} sewadars",
+            Modifier.weight(1.4f),
+            fontSize = 13.sp,
+            color = Color.White.copy(alpha = 0.75f),
+        )
+        Text(
+            groups.sumOf { it.daysAttended }.toString(),
+            Modifier.weight(0.8f),
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+        )
+        Text(
+            groups.sumOf { it.daysComplete }.toString(),
+            Modifier.weight(1f),
+            fontSize = 15.sp,
+            color = Color.White.copy(alpha = 0.85f),
+        )
+        Text(
+            String.format("%.1f", groups.sumOf { it.hours }),
+            Modifier.weight(1f),
+            fontSize = 19.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+        )
+        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.weight(1.2f))
+    }
 }
 
 @Composable

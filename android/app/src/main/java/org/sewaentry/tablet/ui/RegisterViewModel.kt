@@ -16,8 +16,10 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.sewaentry.tablet.data.DayFilter
 import org.sewaentry.tablet.data.DepartmentEntity
+import org.sewaentry.tablet.data.DepartmentGroup
 import org.sewaentry.tablet.data.ExportRow
 import org.sewaentry.tablet.data.PeriodTotals
+import org.sewaentry.tablet.data.Quarter
 import org.sewaentry.tablet.data.ReportPeriod
 import org.sewaentry.tablet.data.Reporting
 import org.sewaentry.tablet.data.SewaDatabase
@@ -28,11 +30,14 @@ import org.sewaentry.tablet.data.SewadarWithStatus
 import org.sewaentry.tablet.export.AttendanceExport
 import java.time.LocalDate
 
-/** Everything the analytics tab needs, recomputed whenever a filter changes. */
+/** Everything the summary tab needs, recomputed whenever a filter changes. */
 data class ReportState(
     val totals: List<SewadarTotals> = emptyList(),
+    val departments: List<DepartmentGroup> = emptyList(),
     val byPeriod: List<PeriodTotals> = emptyList(),
     val periodKeys: List<String> = emptyList(),
+    val monthlyHours: Map<Pair<Long, String>, Double> = emptyMap(),
+    val sewaDates: List<String> = emptyList(),
     val rows: List<ExportRow> = emptyList(),
     val loading: Boolean = true,
 )
@@ -164,17 +169,28 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- Analytics ---------------------------------------------------------
 
-    private val _from = MutableStateFlow(LocalDate.now().minusMonths(3))
-    private val _to = MutableStateFlow(LocalDate.now())
+    // The summary opens on the current quarter, because producing the
+    // quarterly summary is the job this screen exists for.
+    private val _quarter = MutableStateFlow(Quarter.current())
+    private val _from = MutableStateFlow(Quarter.current().start)
+    private val _to = MutableStateFlow(Quarter.current().end)
     private val _dayFilter = MutableStateFlow(DayFilter.ALL)
     private val _period = MutableStateFlow(ReportPeriod.OVERALL)
     private val _reportDepartmentId = MutableStateFlow<Long?>(null)
 
+    val quarter: StateFlow<Quarter> = _quarter.asStateFlow()
     val from: StateFlow<LocalDate> = _from.asStateFlow()
     val to: StateFlow<LocalDate> = _to.asStateFlow()
     val dayFilter: StateFlow<DayFilter> = _dayFilter.asStateFlow()
     val period: StateFlow<ReportPeriod> = _period.asStateFlow()
     val reportDepartmentId: StateFlow<Long?> = _reportDepartmentId.asStateFlow()
+
+    /** Picking a quarter sets the whole range — one choice, not two dates. */
+    fun selectQuarter(value: Quarter) {
+        _quarter.value = value
+        _from.value = value.start
+        _to.value = value.end
+    }
 
     /**
      * Reports are computed from the raw rows in Kotlin rather than in SQL:
@@ -192,10 +208,15 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
                 val filtered = Reporting.filter(scoped, _dayFilter.value)
                 val roster = repo.rosterRefs(_reportDepartmentId.value)
 
+                val totals = Reporting.totals(filtered, roster)
+
                 ReportState(
-                    totals = Reporting.totals(filtered, roster),
+                    totals = totals,
+                    departments = Reporting.byDepartment(totals),
                     byPeriod = Reporting.byPeriod(filtered, _period.value),
                     periodKeys = Reporting.periodKeys(filtered, _period.value),
+                    monthlyHours = Reporting.monthlyHours(filtered),
+                    sewaDates = Reporting.sewaDatesIn(filtered),
                     rows = filtered,
                     loading = false,
                 )
@@ -225,6 +246,10 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
             val departmentName = departments.value.firstOrNull { it.id == _reportDepartmentId.value }?.name
 
             val sheets = AttendanceExport.build(
+                quarter = _quarter.value,
+                departments = state.departments,
+                monthlyHours = state.monthlyHours,
+                sewaDates = state.sewaDates,
                 totals = state.totals,
                 byPeriod = state.byPeriod,
                 periodKeys = state.periodKeys,

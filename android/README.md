@@ -4,8 +4,20 @@ The Android app that replaces the paper register on the sewa counter. It runs
 entirely on the tablet, needs no network, and is the admin console: whoever
 holds the tablet can record, correct and report on attendance.
 
-Its one purpose is to answer **"how many hours did each sewadar do?"** —
-everything below serves that.
+### What it replaces
+
+Today the sangat does this in three manual passes:
+
+1. **Paper sheets** at the counter — one per department per sewa day
+2. Someone **types those into Excel** afterwards
+3. Someone **prepares the quarterly summary** from that spreadsheet
+
+This app does all three at once. Recording an arrival *is* the spreadsheet
+row, and the quarterly summary is already computed by the time the last person
+signs out — no re-typing, no separate summarising step.
+
+The system is not redesigned, only digitalised: same departments, same sewa
+days, same register, same quarterly summary at the end.
 
 ---
 
@@ -69,8 +81,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ./gradlew :app:testDebugUnitTest
 ```
 
-31 unit tests covering the sewa calendar, the hours arithmetic, and the
-spreadsheet writer. They run on the JVM — no device needed.
+54 unit tests covering the sewa calendar, the hours arithmetic, quarter
+boundaries, department subtotals, and the spreadsheet writer. They run on the JVM — no device needed.
 
 ---
 
@@ -133,29 +145,39 @@ sewadar, and change or clear what is recorded.
 
 ---
 
-## Reports
+## The quarterly summary
 
-The **Analytics** tab answers the hours question. Three independent controls:
+The **Analytics** tab opens on the current quarter, because producing the
+quarterly summary is the job it exists for. Pick a year and a quarter — two
+taps — and the summary is on screen, organised department by department with a
+subtotal under each and a grand total at the bottom, which is how the
+hand-prepared one reads.
 
-- **Range** — 1 month, 3 months, 6 months, 1 year, all time
+Quarters that have not started yet are disabled, since there is nothing to
+summarise.
+
+Everything else is a refinement of that:
+
+- **Or a range** — this month, 6 months, 1 year, all time, when the question is
+  not quarter-shaped
 - **Sewa days** — All / Wednesdays only / Sundays only
-- **Report** — Overall / Weekly / Monthly / Quarterly
-- plus an optional **department** filter
+- **Report** — Overall / Weekly / Monthly / Quarterly grouping
+- **Department** — narrow to one team
 
-Overall shows one row per sewadar. Any other grouping shows a matrix —
-sewadars down the side, periods across the top, hours in the cells, scrolling
-horizontally because a year of weeks is wider than any tablet.
+Any grouping other than Overall shows a matrix instead: sewadars down the side,
+periods across the top, scrolling horizontally because a year of weeks is wider
+than any tablet.
 
-**Export Excel** writes exactly what is on screen to
+**Export Excel** writes what is on screen to
 `Downloads/sewa_hours_<range>_<filters>.xlsx`:
 
 | Sheet | Contents |
 |---|---|
-| Hours by Sewadar | Days attended, days complete, open days, total and average hours, last sewa |
-| *Period* hours | Sewadars × periods matrix, with a per-person total *(only when grouping is not Overall)* |
-| *Period* detail | The same numbers long-form, ready for a pivot table |
-| Register | Every underlying row, including which times were entered by hand |
-| Report Info | The exact filters used, totals, and how hours are counted |
+| **Summary \<quarter\>** | **The deliverable.** Department blocks, a line per sewadar, the quarter's three months as columns, a subtotal per department and a grand total |
+| Hours by Sewadar | Flat per-person totals: days attended, complete, open, total and average hours, last sewa |
+| *Period* hours / detail | Sewadars × periods matrix and its long-form twin *(only when grouping is not Overall)* |
+| Register | Every underlying row — this is the sheet that used to be typed up by hand |
+| Report Info | The exact quarter and filters used, totals, and how hours are counted |
 
 ### How hours are counted
 

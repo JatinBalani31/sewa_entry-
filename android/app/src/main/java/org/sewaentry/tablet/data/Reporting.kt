@@ -166,6 +166,23 @@ object Reporting {
 
         return (recorded + missing).sortedBy { it.name }
     }
+
+    /** Group the totals department by department, the way the summary reads. */
+    fun byDepartment(totals: List<SewadarTotals>): List<DepartmentGroup> =
+        totals.groupBy { it.departmentName ?: "No department" }
+            .map { (name, people) -> DepartmentGroup(name, people.sortedBy { it.name }) }
+            .sortedBy { it.departmentName }
+
+    /**
+     * Hours per sewadar per month, keyed "yyyy-MM" — the three columns inside
+     * a quarterly summary.
+     */
+    fun monthlyHours(rows: List<ExportRow>): Map<Pair<Long, String>, Double> =
+        byPeriod(rows, ReportPeriod.MONTHLY).associate { (it.sewadarId to it.periodKey) to it.hours }
+
+    /** Distinct sewa dates present, so a summary can state how many days it covers. */
+    fun sewaDatesIn(rows: List<ExportRow>): List<String> =
+        rows.map { it.sewaDate }.distinct().sorted()
 }
 
 /** Minimal identity for a sewadar, used to include non-attenders in a report. */
@@ -174,3 +191,60 @@ data class SewadarRef(
     val name: String,
     val departmentName: String?,
 )
+
+/**
+ * A calendar quarter — the unit the sangat's summary is actually prepared in.
+ *
+ * Selecting one sets the whole reporting range, so producing "the Q3 summary"
+ * is a single choice rather than a date range someone has to get right.
+ */
+data class Quarter(val year: Int, val quarter: Int) {
+    val start: LocalDate get() = LocalDate.of(year, (quarter - 1) * 3 + 1, 1)
+    val end: LocalDate get() = start.plusMonths(3).minusDays(1)
+
+    val label: String get() = "$year Q$quarter"
+
+    /** "Jan-Mar", "Jul-Sep" — the months a reader recognises the quarter by. */
+    val monthsLabel: String
+        get() {
+            val first = java.time.Month.of(start.monthValue).name.take(3).lowercase().replaceFirstChar { it.uppercase() }
+            val last = java.time.Month.of(end.monthValue).name.take(3).lowercase().replaceFirstChar { it.uppercase() }
+            return "$first-$last"
+        }
+
+    /** The three months inside this quarter, as "yyyy-MM" keys. */
+    val monthKeys: List<String>
+        get() = (0..2).map { "%d-%02d".format(year, start.plusMonths(it.toLong()).monthValue) }
+
+    val monthLabels: List<String>
+        get() = (0..2).map {
+            java.time.Month.of(start.plusMonths(it.toLong()).monthValue)
+                .name.take(3).lowercase().replaceFirstChar { c -> c.uppercase() }
+        }
+
+    companion object {
+        fun of(date: LocalDate): Quarter = Quarter(date.year, (date.monthValue - 1) / 3 + 1)
+
+        fun current(): Quarter = of(LocalDate.now())
+    }
+}
+
+/**
+ * One department's block in the summary: its people, then its subtotal.
+ *
+ * The paper summary is organised department by department with a total under
+ * each, so the digital one is too — it has to be recognisable to whoever used
+ * to prepare it by hand.
+ */
+data class DepartmentGroup(
+    val departmentName: String,
+    val sewadars: List<SewadarTotals>,
+) {
+    val daysAttended: Int get() = sewadars.sumOf { it.daysAttended }
+    val daysComplete: Int get() = sewadars.sumOf { it.daysComplete }
+    val minutes: Long get() = sewadars.sumOf { it.minutes }
+    val hours: Double get() = minutes / 60.0
+    val openDays: Int get() = sewadars.sumOf { it.openDays }
+    /** People in this department who actually did some sewa in the period. */
+    val activeCount: Int get() = sewadars.count { it.daysAttended > 0 }
+}
