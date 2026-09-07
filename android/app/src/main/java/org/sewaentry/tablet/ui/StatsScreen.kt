@@ -1,9 +1,11 @@
 package org.sewaentry.tablet.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,82 +16,145 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.sewaentry.tablet.data.DayFilter
+import org.sewaentry.tablet.data.ReportPeriod
 import org.sewaentry.tablet.data.SewaDays
-import org.sewaentry.tablet.data.SewadarStats
+import org.sewaentry.tablet.data.SewadarTotals
 import java.time.LocalDate
 
 /**
- * Per-sewadar analytics over a chosen window, and the Excel export.
+ * Individual hours, which is what the whole system exists to report.
  *
- * "Days attended" counts any day with an arrival; "complete" counts only days
- * that were also signed out. Hours only accrue from complete days, so a
- * forgotten sign-out shows up as a gap rather than quietly inflating a total.
+ * Three independent controls: how far back to look, which sewa days count
+ * (all / Wednesdays / Sundays), and how to group the result (overall, weekly,
+ * monthly, quarterly). The Excel export carries exactly the same selection, so
+ * what is on screen is what lands in the file.
  */
 @Composable
 fun StatsScreen(vm: RegisterViewModel) {
-    val stats by vm.stats.collectAsState()
-    val from by vm.statsFrom.collectAsState()
-    val to by vm.statsTo.collectAsState()
+    val state by vm.report.collectAsState()
+    val from by vm.from.collectAsState()
+    val to by vm.to.collectAsState()
+    val dayFilter by vm.dayFilter.collectAsState()
+    val period by vm.period.collectAsState()
+    val departments by vm.departments.collectAsState()
+    val reportDept by vm.reportDepartmentId.collectAsState()
 
     Column(Modifier.fillMaxSize().background(Background).padding(16.dp)) {
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Sewadar analytics", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Ink)
+                Text("Sewadar hours", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Ink)
                 Text(
-                    "${SewaDays.format(from)} to ${SewaDays.format(to)}",
-                    fontSize = 13.sp,
+                    "${SewaDays.format(from)} to ${SewaDays.format(to)} - ${dayFilter.label} - ${period.label}",
+                    fontSize = 14.sp,
                     color = InkMuted,
                 )
             }
 
-            RangeChip("1 month") { vm.setStatsRange(LocalDate.now().minusMonths(1), LocalDate.now()) }
-            Spacer(Modifier.width(8.dp))
-            RangeChip("3 months") { vm.setStatsRange(LocalDate.now().minusMonths(3), LocalDate.now()) }
-            Spacer(Modifier.width(8.dp))
-            RangeChip("1 year") { vm.setStatsRange(LocalDate.now().minusYears(1), LocalDate.now()) }
-
-            Spacer(Modifier.width(14.dp))
-
             Button(
                 onClick = { vm.exportExcel() },
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Navy),
-                modifier = Modifier.height(50.dp),
+                modifier = Modifier.height(62.dp).width(230.dp),
             ) {
-                Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Export Excel", fontWeight = FontWeight.SemiBold)
+                Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(10.dp))
+                Text("Export Excel", fontWeight = FontWeight.Bold, fontSize = 18.sp)
             }
         }
 
         Spacer(Modifier.height(14.dp))
 
-        val attended = stats.count { it.daysAttended > 0 }
-        val totalHours = stats.sumOf { it.totalMinutes } / 60.0
-        val open = stats.sumOf { it.daysAttended - it.daysComplete }
+        // --- Filters ---------------------------------------------------------
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Surface),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                FilterRow("Range") {
+                    RangeChip("1 month", from == LocalDate.now().minusMonths(1)) {
+                        vm.setRange(LocalDate.now().minusMonths(1), LocalDate.now())
+                    }
+                    RangeChip("3 months", from == LocalDate.now().minusMonths(3)) {
+                        vm.setRange(LocalDate.now().minusMonths(3), LocalDate.now())
+                    }
+                    RangeChip("6 months", from == LocalDate.now().minusMonths(6)) {
+                        vm.setRange(LocalDate.now().minusMonths(6), LocalDate.now())
+                    }
+                    RangeChip("1 year", from == LocalDate.now().minusYears(1)) {
+                        vm.setRange(LocalDate.now().minusYears(1), LocalDate.now())
+                    }
+                    RangeChip("All time", from.year <= 2000) {
+                        vm.setRange(LocalDate.of(2000, 1, 1), LocalDate.now())
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                FilterRow("Sewa days") {
+                    DayFilter.entries.forEach { option ->
+                        RangeChip(option.label, dayFilter == option) { vm.setDayFilter(option) }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                FilterRow("Report") {
+                    ReportPeriod.entries.forEach { option ->
+                        RangeChip(option.label, period == option) { vm.setPeriod(option) }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                FilterRow("Department") {
+                    DepartmentPicker(
+                        departments = departments.map { it.id to it.name },
+                        selectedId = reportDept,
+                        onSelect = vm::setReportDepartment,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(14.dp))
+
+        val totalHours = state.totals.sumOf { it.hours }
+        val attended = state.totals.count { it.daysAttended > 0 }
+        val open = state.totals.sumOf { it.openDays }
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            StatTile("Sewadars active", attended.toString(), Modifier.weight(1f))
+            StatTile("Sewadars with hours", attended.toString(), Modifier.weight(1f))
             StatTile("Total hours", String.format("%.1f", totalHours), Modifier.weight(1f))
+            StatTile("Sewa days counted", state.rows.map { it.sewaDate }.distinct().size.toString(), Modifier.weight(1f))
             StatTile(
                 "Days without sign-out",
                 open.toString(),
@@ -105,101 +170,237 @@ fun StatsScreen(vm: RegisterViewModel) {
             colors = CardDefaults.cardColors(containerColor = Surface),
             modifier = Modifier.fillMaxWidth().weight(1f),
         ) {
-            Column {
-                HeaderRow()
-                if (stats.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No sewadars yet.", color = InkMuted)
-                    }
-                } else {
-                    LazyColumn {
-                        items(stats, key = { it.sewadarId }) { StatRow(it) }
+            if (period == ReportPeriod.OVERALL) {
+                Column {
+                    TotalsHeader()
+                    if (state.totals.isEmpty()) {
+                        EmptyState(state.loading)
+                    } else {
+                        LazyColumn {
+                            items(state.totals, key = { it.sewadarId }) { TotalsRow(it) }
+                        }
                     }
                 }
+            } else {
+                PeriodMatrix(vm)
             }
         }
     }
 }
 
 @Composable
-private fun RangeChip(label: String, onClick: () -> Unit) {
-    Button(
-        onClick = onClick,
-        shape = RoundedCornerShape(999.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = Surface, contentColor = Navy),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-    ) { Text(label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold) }
+private fun FilterRow(label: String, content: @Composable () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label.uppercase(),
+            Modifier.width(120.dp),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = InkMuted,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { content() }
+    }
 }
 
 @Composable
-private fun StatTile(label: String, value: String, modifier: Modifier = Modifier, accent: Color? = null) {
-    Card(
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = Surface),
-        modifier = modifier,
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(label.uppercase(), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = InkMuted)
-            Spacer(Modifier.height(4.dp))
-            Text(value, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = accent ?: Ink)
+private fun RangeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        shape = RoundedCornerShape(999.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (selected) Navy else SurfaceAlt,
+            contentColor = if (selected) Color.White else InkMuted,
+        ),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+        modifier = Modifier.height(50.dp),
+    ) { Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
+}
+
+@Composable
+private fun DepartmentPicker(
+    departments: List<Pair<Long, String>>,
+    selectedId: Long?,
+    onSelect: (Long?) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val label = departments.firstOrNull { it.first == selectedId }?.second ?: "All departments"
+
+    Box {
+        Button(
+            onClick = { expanded = true },
+            shape = RoundedCornerShape(999.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = SurfaceAlt, contentColor = Ink),
+            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+            modifier = Modifier.height(50.dp),
+        ) {
+            Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.width(6.dp))
+            Icon(Icons.Filled.ExpandMore, contentDescription = null, modifier = Modifier.size(20.dp))
+        }
+
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text("All departments", fontSize = 17.sp) },
+                onClick = { onSelect(null); expanded = false },
+            )
+            departments.forEach { (id, name) ->
+                DropdownMenuItem(
+                    text = { Text(name, fontSize = 17.sp) },
+                    onClick = { onSelect(id); expanded = false },
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun HeaderRow() {
-    Row(
-        Modifier.fillMaxWidth().background(SurfaceAlt).padding(horizontal = 16.dp, vertical = 12.dp),
+private fun StatTile(label: String, value: String, modifier: Modifier = Modifier, accent: Color? = null) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Surface),
+        modifier = modifier,
     ) {
+        Column(Modifier.padding(18.dp)) {
+            Text(label.uppercase(), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = InkMuted)
+            Spacer(Modifier.height(6.dp))
+            Text(value, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = accent ?: Ink)
+        }
+    }
+}
+
+@Composable
+private fun TotalsHeader() {
+    Row(Modifier.fillMaxWidth().background(SurfaceAlt).padding(horizontal = 18.dp, vertical = 14.dp)) {
         HeaderCell("Sewadar", Modifier.weight(2.2f))
         HeaderCell("Department", Modifier.weight(1.4f))
         HeaderCell("Days", Modifier.weight(0.8f))
         HeaderCell("Complete", Modifier.weight(1f))
         HeaderCell("Total hours", Modifier.weight(1f))
-        HeaderCell("Avg", Modifier.weight(0.8f))
+        HeaderCell("Avg / day", Modifier.weight(1f))
         HeaderCell("Last sewa", Modifier.weight(1.2f))
     }
 }
 
 @Composable
 private fun HeaderCell(text: String, modifier: Modifier) {
-    Text(
-        text.uppercase(),
-        modifier,
-        fontSize = 11.sp,
-        fontWeight = FontWeight.Bold,
-        color = InkMuted,
-    )
+    Text(text.uppercase(), modifier, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = InkMuted)
 }
 
 @Composable
-private fun StatRow(stat: SewadarStats) {
-    val hours = stat.totalMinutes / 60.0
-    val average = if (stat.daysComplete > 0) hours / stat.daysComplete else 0.0
-    val incomplete = stat.daysAttended - stat.daysComplete
+private fun TotalsRow(stat: SewadarTotals) {
+    val average = if (stat.daysComplete > 0) stat.hours / stat.daysComplete else 0.0
 
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(stat.name, Modifier.weight(2.2f), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Ink)
-        Text(stat.departmentName ?: "--", Modifier.weight(1.4f), fontSize = 14.sp, color = InkMuted)
-        Text(stat.daysAttended.toString(), Modifier.weight(0.8f), fontSize = 14.sp, color = Ink)
+        Text(stat.name, Modifier.weight(2.2f), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+        Text(stat.departmentName ?: "--", Modifier.weight(1.4f), fontSize = 15.sp, color = InkMuted)
+        Text(stat.daysAttended.toString(), Modifier.weight(0.8f), fontSize = 15.sp, color = Ink)
         Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-            Text(stat.daysComplete.toString(), fontSize = 14.sp, color = Ink)
-            if (incomplete > 0) {
+            Text(stat.daysComplete.toString(), fontSize = 15.sp, color = Ink)
+            if (stat.openDays > 0) {
                 Spacer(Modifier.width(6.dp))
                 Box(
-                    Modifier
-                        .background(AmberBg, RoundedCornerShape(999.dp))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    Modifier.background(AmberBg, RoundedCornerShape(999.dp)).padding(horizontal = 8.dp, vertical = 3.dp),
                 ) {
-                    Text("$incomplete open", fontSize = 10.sp, color = Amber, fontWeight = FontWeight.Bold)
+                    Text("${stat.openDays} open", fontSize = 11.sp, color = Amber, fontWeight = FontWeight.Bold)
                 }
             }
         }
-        Text(String.format("%.1f", hours), Modifier.weight(1f), fontSize = 14.sp, color = Ink)
-        Text(String.format("%.1f", average), Modifier.weight(0.8f), fontSize = 14.sp, color = InkMuted)
-        Text(stat.lastAttendedDate ?: "--", Modifier.weight(1.2f), fontSize = 13.sp, color = InkMuted)
+        Text(
+            String.format("%.1f", stat.hours),
+            Modifier.weight(1f),
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold,
+            color = Ink,
+        )
+        Text(String.format("%.1f", average), Modifier.weight(1f), fontSize = 15.sp, color = InkMuted)
+        Text(stat.lastAttended ?: "--", Modifier.weight(1.2f), fontSize = 14.sp, color = InkMuted)
+    }
+}
+
+/**
+ * Sewadars down the side, periods across the top. Scrolls horizontally
+ * because a year of weeks is far wider than any tablet.
+ */
+@Composable
+private fun PeriodMatrix(vm: RegisterViewModel) {
+    val state by vm.report.collectAsState()
+    val period by vm.period.collectAsState()
+    val scroll = rememberScrollState()
+
+    val byKey = remember(state.byPeriod) { state.byPeriod.associateBy { it.sewadarId to it.periodKey } }
+
+    if (state.totals.isEmpty()) {
+        EmptyState(state.loading)
+        return
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().background(SurfaceAlt).padding(vertical = 14.dp)) {
+            Text(
+                "SEWADAR",
+                Modifier.width(240.dp).padding(start = 18.dp),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = InkMuted,
+            )
+            Row(Modifier.horizontalScroll(scroll)) {
+                state.periodKeys.forEach { key ->
+                    Text(
+                        org.sewaentry.tablet.data.Reporting.periodLabel(key, period),
+                        Modifier.width(130.dp),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = InkMuted,
+                    )
+                }
+                Text("TOTAL", Modifier.width(110.dp), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Navy)
+            }
+        }
+
+        LazyColumn {
+            items(state.totals, key = { it.sewadarId }) { stat ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.width(240.dp).padding(start = 18.dp)) {
+                        Text(stat.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                        Text(stat.departmentName ?: "--", fontSize = 12.sp, color = InkMuted)
+                    }
+                    Row(Modifier.horizontalScroll(scroll)) {
+                        state.periodKeys.forEach { key ->
+                            val hours = byKey[stat.sewadarId to key]?.hours ?: 0.0
+                            Text(
+                                if (hours > 0) String.format("%.1f", hours) else "-",
+                                Modifier.width(130.dp),
+                                fontSize = 16.sp,
+                                color = if (hours > 0) Ink else Line,
+                            )
+                        }
+                        Text(
+                            String.format("%.1f", stat.hours),
+                            Modifier.width(110.dp),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Navy,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmptyState(loading: Boolean) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            if (loading) "Working it out..." else "No sewa recorded in this range.",
+            color = InkMuted,
+            fontSize = 17.sp,
+        )
     }
 }

@@ -1,5 +1,6 @@
 package org.sewaentry.tablet.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,7 +18,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -35,18 +35,16 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -59,6 +57,10 @@ private sealed interface Capture {
     data class Departure(val sewadar: SewadarWithStatus) : Capture
 }
 
+// Sized for a finger on a 10" tablet, not a mouse.
+private val ACTION_BUTTON_HEIGHT = 76.dp
+private val ACTION_BUTTON_WIDTH = 210.dp
+
 @Composable
 fun RegisterScreen(vm: RegisterViewModel) {
     val date by vm.date.collectAsState()
@@ -67,10 +69,11 @@ fun RegisterScreen(vm: RegisterViewModel) {
     val roster by vm.roster.collectAsState()
     val selected by vm.selected.collectAsState()
     val recordedDates by vm.recordedDates.collectAsState()
+    val isToday by vm.isToday.collectAsState()
 
     var capture by remember { mutableStateOf<Capture?>(null) }
     var addingSewadar by remember { mutableStateOf(false) }
-    var adminEditing by remember { mutableStateOf<SewadarWithStatus?>(null) }
+    var manualFor by remember { mutableStateOf<SewadarWithStatus?>(null) }
 
     Box(Modifier.fillMaxSize().background(Background)) {
         Column(Modifier.fillMaxSize().padding(16.dp)) {
@@ -88,7 +91,7 @@ fun RegisterScreen(vm: RegisterViewModel) {
                     departments = departments.map { it.id to it.name },
                     selectedId = departmentId,
                     onSelect = vm::selectDepartment,
-                    modifier = Modifier.width(320.dp),
+                    modifier = Modifier.width(340.dp),
                 )
 
                 Spacer(Modifier.width(12.dp))
@@ -97,28 +100,34 @@ fun RegisterScreen(vm: RegisterViewModel) {
                 val complete = roster.count { it.departureAt != null }
                 Summary(present = present, complete = complete, total = roster.size)
 
+                if (!isToday) {
+                    Spacer(Modifier.width(12.dp))
+                    Pill("Past day - manual entry only", AmberBg, Amber)
+                }
+
                 Spacer(Modifier.weight(1f))
 
                 OutlinedButton(
                     onClick = { addingSewadar = true },
                     enabled = departmentId != null,
                     shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.height(58.dp),
                 ) {
-                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("Add sewadar")
+                    Text("Add sewadar", fontSize = 16.sp)
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(14.dp))
 
             if (roster.isEmpty()) {
                 EmptyRoster(hasDepartment = departmentId != null)
             } else {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 190.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    columns = GridCells.Adaptive(minSize = 260.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.weight(1f),
                 ) {
                     items(roster, key = { it.sewadarId }) { sewadar ->
@@ -136,15 +145,15 @@ fun RegisterScreen(vm: RegisterViewModel) {
             }
         }
 
-        // The action bar only exists once somebody is picked — before that
-        // there is nothing to act on, and an always-present disabled button
-        // would just be noise.
         selected?.let { sewadar ->
             ActionBar(
                 sewadar = sewadar,
+                // On a past day the device clock is meaningless, so the live
+                // buttons are withheld entirely and Manual is the only way in.
+                allowLiveCapture = isToday,
                 onArrival = { capture = Capture.Arrival(sewadar) },
                 onDeparture = { capture = Capture.Departure(sewadar) },
-                onAdminEdit = { adminEditing = sewadar },
+                onManual = { manualFor = sewadar },
                 modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
             )
         }
@@ -187,17 +196,19 @@ fun RegisterScreen(vm: RegisterViewModel) {
         )
     }
 
-    adminEditing?.let { sewadar ->
-        AdminTimeDialog(
+    manualFor?.let { sewadar ->
+        ManualTimeDialog(
             sewadar = sewadar,
-            onDismiss = { adminEditing = null },
+            date = date,
+            isToday = isToday,
+            onDismiss = { manualFor = null },
             onSet = { arrival, hour, minute ->
-                vm.adminSetTime(sewadar.sewadarId, arrival, hour, minute)
-                adminEditing = null
+                vm.manualSetTime(sewadar.sewadarId, arrival, hour, minute)
+                manualFor = null
             },
             onClear = {
                 vm.clearRecord(sewadar.sewadarId)
-                adminEditing = null
+                manualFor = null
             },
         )
     }
@@ -217,9 +228,9 @@ private fun Pill(text: String, background: Color, foreground: Color) {
     Box(
         Modifier
             .background(background, RoundedCornerShape(999.dp))
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
-        Text(text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = foreground)
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = foreground)
     }
 }
 
@@ -235,17 +246,17 @@ private fun DepartmentDropdown(
 
     Box(modifier) {
         Card(
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = Surface),
             modifier = Modifier.fillMaxWidth().clickable { expanded = true },
         ) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Department", fontSize = 11.sp, color = InkMuted, fontWeight = FontWeight.SemiBold)
-                    Text(label, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Ink)
+                    Text("Department", fontSize = 12.sp, color = InkMuted, fontWeight = FontWeight.SemiBold)
+                    Text(label, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink)
                 }
                 Icon(Icons.Filled.ExpandMore, contentDescription = "Choose department", tint = Navy)
             }
@@ -254,7 +265,7 @@ private fun DepartmentDropdown(
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             departments.forEach { (id, name) ->
                 DropdownMenuItem(
-                    text = { Text(name, fontSize = 16.sp) },
+                    text = { Text(name, fontSize = 18.sp, modifier = Modifier.padding(vertical = 6.dp)) },
                     onClick = {
                         onSelect(id)
                         expanded = false
@@ -269,8 +280,8 @@ private fun DepartmentDropdown(
 }
 
 /**
- * One name in the grid — a big rounded tile, sized for a finger, showing at a
- * glance whether this person has arrived and left.
+ * One name in the grid — a large rounded tile showing at a glance whether this
+ * person has arrived and left.
  */
 @Composable
 private fun SewadarTile(
@@ -294,17 +305,17 @@ private fun SewadarTile(
     }
 
     Card(
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = container),
         modifier = Modifier
-            .height(132.dp)
-            .border(if (isSelected) 3.dp else 1.dp, borderColor, RoundedCornerShape(18.dp))
+            .height(178.dp)
+            .border(if (isSelected) 4.dp else 1.dp, borderColor, RoundedCornerShape(22.dp))
             .clickable(onClick = onClick),
     ) {
-        Column(Modifier.fillMaxSize().padding(14.dp)) {
+        Column(Modifier.fillMaxSize().padding(18.dp)) {
             Text(
                 sewadar.name,
-                fontSize = 17.sp,
+                fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
                 color = Ink,
                 maxLines = 2,
@@ -318,24 +329,22 @@ private fun SewadarTile(
                     text = if (arrived) SewaDays.formatTime(sewadar.arrivalAt) else "In",
                     filled = arrived,
                     accent = ArrivalGreen,
-                    background = ArrivalGreenBg,
                     edited = sewadar.arrivalEdited,
                 )
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(8.dp))
                 StatusChip(
                     text = if (departed) SewaDays.formatTime(sewadar.departureAt) else "Out",
                     filled = departed,
                     accent = DepartureRed,
-                    background = DepartureRedBg,
                     edited = sewadar.departureEdited,
                 )
             }
 
             if (arrived && departed) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
                 Text(
                     SewaDays.formatDuration(SewaDays.minutesBetween(sewadar.arrivalAt, sewadar.departureAt)),
-                    fontSize = 12.sp,
+                    fontSize = 15.sp,
                     color = InkMuted,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -349,18 +358,19 @@ private fun StatusChip(
     text: String,
     filled: Boolean,
     accent: Color,
-    background: Color,
     edited: Boolean,
 ) {
     Box(
         Modifier
             .background(if (filled) accent else Color.Transparent, RoundedCornerShape(999.dp))
-            .then(if (!filled) Modifier.border(1.dp, Line, RoundedCornerShape(999.dp)) else Modifier)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .then(if (!filled) Modifier.border(2.dp, Line, RoundedCornerShape(999.dp)) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
         Text(
+            // A trailing asterisk marks a time an admin typed rather than one
+            // the device recorded.
             if (edited) "$text*" else text,
-            fontSize = 12.sp,
+            fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
             color = if (filled) Color.White else InkMuted,
         )
@@ -368,88 +378,120 @@ private fun StatusChip(
 }
 
 /**
- * Bottom-right action bar for the picked sewadar: arrival first, and departure
- * only appears once there is an arrival to close.
+ * Bottom-right action bar for the picked sewadar.
+ *
+ * On today: Arrival first, then Departure once there is an arrival to close,
+ * with Manual always available alongside. On any past day the live buttons are
+ * absent entirely — the device clock would record the wrong thing.
  */
 @Composable
 private fun ActionBar(
     sewadar: SewadarWithStatus,
+    allowLiveCapture: Boolean,
     onArrival: () -> Unit,
     onDeparture: () -> Unit,
-    onAdminEdit: () -> Unit,
+    onManual: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val arrived = sewadar.arrivalAt != null
     val departed = sewadar.departureAt != null
 
     Card(
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = Surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
         modifier = modifier,
     ) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.padding(end = 16.dp)) {
-                Text(sewadar.name, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.padding(end = 20.dp)) {
+                Text(sewadar.name, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Ink)
                 Text(
                     when {
                         departed -> "Complete"
                         arrived -> "Signed in at ${SewaDays.formatTime(sewadar.arrivalAt)}"
                         else -> "Not yet arrived"
                     },
-                    fontSize = 12.sp,
+                    fontSize = 14.sp,
                     color = InkMuted,
                 )
             }
 
-            TextButton(onClick = onAdminEdit) {
-                Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp), tint = InkMuted)
-                Spacer(Modifier.width(4.dp))
-                Text("Admin", color = InkMuted, fontSize = 13.sp)
-            }
+            ManualButton(onClick = onManual)
 
-            Spacer(Modifier.width(8.dp))
+            if (allowLiveCapture) {
+                Spacer(Modifier.width(12.dp))
 
-            if (!arrived) {
-                OutlinedButton(
-                    onClick = onArrival,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.height(64.dp).width(190.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ArrivalGreen),
-                    border = androidx.compose.foundation.BorderStroke(2.dp, ArrivalGreen),
-                ) {
-                    Icon(Icons.Filled.Login, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Arrival", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                if (!arrived) {
+                    LiveButton(
+                        label = "Arrival",
+                        icon = Icons.Filled.Login,
+                        accent = ArrivalGreen,
+                        onClick = onArrival,
+                    )
+                } else {
+                    FilledChipButton("Arrived ${SewaDays.formatTime(sewadar.arrivalAt)}", ArrivalGreen)
+                    Spacer(Modifier.width(12.dp))
+                    if (!departed) {
+                        LiveButton(
+                            label = "Departure",
+                            icon = Icons.Filled.Logout,
+                            accent = DepartureRed,
+                            onClick = onDeparture,
+                        )
+                    } else {
+                        FilledChipButton("Left ${SewaDays.formatTime(sewadar.departureAt)}", DepartureRed)
+                    }
                 }
             } else {
-                FilledChipButton(
-                    label = "Arrived ${SewaDays.formatTime(sewadar.arrivalAt)}",
-                    color = ArrivalGreen,
+                // Past day: show what is on record, with no way to capture live.
+                Spacer(Modifier.width(12.dp))
+                RecordedChip(
+                    text = if (arrived) "In ${SewaDays.formatTime(sewadar.arrivalAt)}" else "No arrival",
+                    accent = if (arrived) ArrivalGreen else InkMuted,
                 )
-
-                Spacer(Modifier.width(10.dp))
-
-                if (!departed) {
-                    OutlinedButton(
-                        onClick = onDeparture,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.height(64.dp).width(190.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = DepartureRed),
-                        border = androidx.compose.foundation.BorderStroke(2.dp, DepartureRed),
-                    ) {
-                        Icon(Icons.Filled.Logout, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Departure", fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    }
-                } else {
-                    FilledChipButton(
-                        label = "Left ${SewaDays.formatTime(sewadar.departureAt)}",
-                        color = DepartureRed,
-                    )
-                }
+                Spacer(Modifier.width(12.dp))
+                RecordedChip(
+                    text = if (departed) "Out ${SewaDays.formatTime(sewadar.departureAt)}" else "No departure",
+                    accent = if (departed) DepartureRed else InkMuted,
+                )
             }
         }
+    }
+}
+
+/** Grey, and the same size as Arrival so the bar reads as one row of controls. */
+@Composable
+private fun ManualButton(onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.height(ACTION_BUTTON_HEIGHT).width(ACTION_BUTTON_WIDTH),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = InkMuted),
+        border = BorderStroke(2.dp, Line),
+    ) {
+        Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(10.dp))
+        Text("Manual", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun LiveButton(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    accent: Color,
+    onClick: () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.height(ACTION_BUTTON_HEIGHT).width(ACTION_BUTTON_WIDTH),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = accent),
+        border = BorderStroke(3.dp, accent),
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(10.dp))
+        Text(label, fontSize = 20.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -457,16 +499,30 @@ private fun ActionBar(
 private fun FilledChipButton(label: String, color: Color) {
     Box(
         Modifier
-            .height(64.dp)
-            .background(color, RoundedCornerShape(14.dp))
-            .padding(horizontal = 22.dp),
+            .height(ACTION_BUTTON_HEIGHT)
+            .background(color, RoundedCornerShape(16.dp))
+            .padding(horizontal = 24.dp),
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White)
-            Spacer(Modifier.width(8.dp))
-            Text(label, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(10.dp))
+            Text(label, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
+    }
+}
+
+@Composable
+private fun RecordedChip(text: String, accent: Color) {
+    Box(
+        Modifier
+            .height(ACTION_BUTTON_HEIGHT)
+            .background(SurfaceAlt, RoundedCornerShape(16.dp))
+            .border(2.dp, Line, RoundedCornerShape(16.dp))
+            .padding(horizontal = 22.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text, color = accent, fontSize = 17.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -476,13 +532,13 @@ private fun EmptyRoster(hasDepartment: Boolean) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 if (hasDepartment) "No sewadars in this department yet" else "Choose a department to begin",
-                fontSize = 18.sp,
+                fontSize = 20.sp,
                 color = InkMuted,
                 fontWeight = FontWeight.SemiBold,
             )
             if (hasDepartment) {
-                Spacer(Modifier.height(6.dp))
-                Text("Use \"Add sewadar\" to build the roster.", fontSize = 14.sp, color = InkMuted)
+                Spacer(Modifier.height(8.dp))
+                Text("Use \"Add sewadar\" to build the roster.", fontSize = 16.sp, color = InkMuted)
             }
         }
     }

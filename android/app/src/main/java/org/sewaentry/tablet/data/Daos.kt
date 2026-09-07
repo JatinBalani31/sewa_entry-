@@ -64,6 +64,28 @@ interface SewadarDao {
         """
     )
     fun observeRegister(departmentId: Long, sewaDate: String): Flow<List<SewadarWithStatus>>
+
+    @Query(
+        """
+        SELECT s.id AS id, s.name AS name, d.name AS departmentName
+        FROM sewadars s
+        LEFT JOIN departments d ON d.id = s.departmentId
+        WHERE s.isActive = 1
+        ORDER BY s.name
+        """
+    )
+    suspend fun rosterRefs(): List<SewadarRef>
+
+    @Query(
+        """
+        SELECT s.id AS id, s.name AS name, d.name AS departmentName
+        FROM sewadars s
+        LEFT JOIN departments d ON d.id = s.departmentId
+        WHERE s.isActive = 1 AND s.departmentId = :departmentId
+        ORDER BY s.name
+        """
+    )
+    suspend fun rosterRefs(departmentId: Long): List<SewadarRef>
 }
 
 @Dao

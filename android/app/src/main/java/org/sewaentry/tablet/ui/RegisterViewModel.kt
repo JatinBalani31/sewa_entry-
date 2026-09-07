@@ -14,26 +14,47 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import org.sewaentry.tablet.data.DayFilter
 import org.sewaentry.tablet.data.DepartmentEntity
+import org.sewaentry.tablet.data.ExportRow
+import org.sewaentry.tablet.data.PeriodTotals
+import org.sewaentry.tablet.data.ReportPeriod
+import org.sewaentry.tablet.data.Reporting
 import org.sewaentry.tablet.data.SewaDatabase
 import org.sewaentry.tablet.data.SewaDays
 import org.sewaentry.tablet.data.SewaRepository
-import org.sewaentry.tablet.data.SewadarStats
+import org.sewaentry.tablet.data.SewadarTotals
 import org.sewaentry.tablet.data.SewadarWithStatus
 import org.sewaentry.tablet.export.AttendanceExport
 import java.time.LocalDate
 
-/**
- * Holds the register's state: which day, which department, who is selected,
- * and which signature dialog (if any) is open.
- */
+/** Everything the analytics tab needs, recomputed whenever a filter changes. */
+data class ReportState(
+    val totals: List<SewadarTotals> = emptyList(),
+    val byPeriod: List<PeriodTotals> = emptyList(),
+    val periodKeys: List<String> = emptyList(),
+    val rows: List<ExportRow> = emptyList(),
+    val loading: Boolean = true,
+)
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class RegisterViewModel(app: Application) : AndroidViewModel(app) {
 
     private val repo = SewaRepository(SewaDatabase.get(app))
 
+    // --- Register ----------------------------------------------------------
+
     private val _date = MutableStateFlow(SewaDays.currentOrPrevious())
     val date: StateFlow<LocalDate> = _date.asStateFlow()
+
+    /**
+     * Live capture only makes sense on the day it happens; every other day is
+     * manual-entry only. The register screen reads this to decide whether the
+     * arrival/departure buttons exist at all.
+     */
+    val isToday: StateFlow<Boolean> =
+        _date.map { it == LocalDate.now() }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, _date.value == LocalDate.now())
 
     private val _departmentId = MutableStateFlow<Long?>(null)
     val departmentId: StateFlow<Long?> = _departmentId.asStateFlow()
@@ -52,10 +73,6 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
             .map { it.toSet() }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
-    /**
-     * The name grid. Re-queries whenever the day or the department changes,
-     * which is what makes the tiles flip to the new department's states.
-     */
     val roster: StateFlow<List<SewadarWithStatus>> =
         combine(_departmentId, _date) { dept, date -> dept to date }
             .flatMapLatest { (dept, date) ->
@@ -68,7 +85,6 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     init {
-        // Land on a department immediately so the register is usable on open.
         viewModelScope.launch {
             departments.collect { list ->
                 if (_departmentId.value == null && list.isNotEmpty()) {
@@ -86,8 +102,6 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectDepartment(id: Long) {
         _departmentId.value = id
-        // Clearing the selection is what prevents a name staying highlighted
-        // after switching to a department it does not belong to.
         _selectedSewadarId.value = null
     }
 
@@ -99,34 +113,32 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
         _message.value = null
     }
 
-    /** Live tap: the time is the device clock, never anything the user typed. */
+    /** Live tap: the time is the device clock. Only offered on today. */
     fun recordArrival(sewadarId: Long, signature: String) = viewModelScope.launch {
-        val result = repo.recordArrival(
+        repo.recordArrival(
             sewadarId = sewadarId,
             departmentId = _departmentId.value,
             date = _date.value,
             at = System.currentTimeMillis(),
             signature = signature,
-        )
-        result.exceptionOrNull()?.let { _message.value = it.message }
+        ).exceptionOrNull()?.let { _message.value = it.message }
     }
 
     fun recordDeparture(sewadarId: Long, signature: String) = viewModelScope.launch {
-        val result = repo.recordDeparture(
+        repo.recordDeparture(
             sewadarId = sewadarId,
             departmentId = _departmentId.value,
             date = _date.value,
             at = System.currentTimeMillis(),
             signature = signature,
-        )
-        result.exceptionOrNull()?.let { _message.value = it.message }
+        ).exceptionOrNull()?.let { _message.value = it.message }
     }
 
     /**
-     * Admin correction. Unlike a tap this sets the time by hand, so the row is
-     * flagged as edited and the register shows it.
+     * Manual entry. Sets the time by hand on the currently selected date, and
+     * flags the row as edited so the register and every export show it.
      */
-    fun adminSetTime(sewadarId: Long, arrival: Boolean, hour: Int, minute: Int) = viewModelScope.launch {
+    fun manualSetTime(sewadarId: Long, arrival: Boolean, hour: Int, minute: Int) = viewModelScope.launch {
         val at = SewaDays.timeOnDate(_date.value, hour, minute)
         val result = if (arrival) {
             repo.recordArrival(sewadarId, _departmentId.value, _date.value, at, signature = null, edited = true)
@@ -134,7 +146,7 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
             repo.recordDeparture(sewadarId, _departmentId.value, _date.value, at, signature = null, edited = true)
         }
         result.fold(
-            onSuccess = { _message.value = "Time updated." },
+            onSuccess = { _message.value = "Time saved." },
             onFailure = { _message.value = it.message },
         )
     }
@@ -150,40 +162,88 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
         repo.addSewadar(name, dept, phone)
     }
 
-    fun addDepartment(name: String) = viewModelScope.launch {
-        if (name.isBlank()) return@launch
-        repo.addDepartment(name)
-    }
-
     // --- Analytics ---------------------------------------------------------
 
-    private val _statsFrom = MutableStateFlow(LocalDate.now().minusMonths(3))
-    private val _statsTo = MutableStateFlow(LocalDate.now())
-    val statsFrom: StateFlow<LocalDate> = _statsFrom.asStateFlow()
-    val statsTo: StateFlow<LocalDate> = _statsTo.asStateFlow()
+    private val _from = MutableStateFlow(LocalDate.now().minusMonths(3))
+    private val _to = MutableStateFlow(LocalDate.now())
+    private val _dayFilter = MutableStateFlow(DayFilter.ALL)
+    private val _period = MutableStateFlow(ReportPeriod.OVERALL)
+    private val _reportDepartmentId = MutableStateFlow<Long?>(null)
 
-    val stats: StateFlow<List<SewadarStats>> =
-        combine(_statsFrom, _statsTo) { from, to -> from to to }
-            .flatMapLatest { (from, to) -> repo.stats(from, to) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val from: StateFlow<LocalDate> = _from.asStateFlow()
+    val to: StateFlow<LocalDate> = _to.asStateFlow()
+    val dayFilter: StateFlow<DayFilter> = _dayFilter.asStateFlow()
+    val period: StateFlow<ReportPeriod> = _period.asStateFlow()
+    val reportDepartmentId: StateFlow<Long?> = _reportDepartmentId.asStateFlow()
 
-    fun setStatsRange(from: LocalDate, to: LocalDate) {
-        _statsFrom.value = from
-        _statsTo.value = to
+    /**
+     * Reports are computed from the raw rows in Kotlin rather than in SQL:
+     * the filtering and bucketing is the part most likely to be wrong, and
+     * this way it is pure, shared with the Excel export, and unit-tested.
+     */
+    val report: StateFlow<ReportState> =
+        combine(_from, _to, _dayFilter, _period, _reportDepartmentId) { from, to, day, period, dept ->
+            listOf(from, to, day, period, dept)
+        }.flatMapLatest {
+            flowOf(Unit).map {
+                val all = repo.exportRows(_from.value, _to.value)
+                val scoped = if (_reportDepartmentId.value == null) all
+                    else all.filter { it.departmentId == _reportDepartmentId.value }
+                val filtered = Reporting.filter(scoped, _dayFilter.value)
+                val roster = repo.rosterRefs(_reportDepartmentId.value)
+
+                ReportState(
+                    totals = Reporting.totals(filtered, roster),
+                    byPeriod = Reporting.byPeriod(filtered, _period.value),
+                    periodKeys = Reporting.periodKeys(filtered, _period.value),
+                    rows = filtered,
+                    loading = false,
+                )
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReportState())
+
+    fun setRange(from: LocalDate, to: LocalDate) {
+        _from.value = from
+        _to.value = to
+    }
+
+    fun setDayFilter(value: DayFilter) {
+        _dayFilter.value = value
+    }
+
+    fun setPeriod(value: ReportPeriod) {
+        _period.value = value
+    }
+
+    fun setReportDepartment(id: Long?) {
+        _reportDepartmentId.value = id
     }
 
     fun exportExcel() = viewModelScope.launch {
         try {
-            val from = _statsFrom.value
-            val to = _statsTo.value
+            val state = report.value
+            val departmentName = departments.value.firstOrNull { it.id == _reportDepartmentId.value }?.name
+
             val sheets = AttendanceExport.build(
-                stats = stats.value,
-                rows = repo.exportRows(from, to),
-                from = from,
-                to = to,
+                totals = state.totals,
+                byPeriod = state.byPeriod,
+                periodKeys = state.periodKeys,
+                rows = state.rows,
+                from = _from.value,
+                to = _to.value,
+                dayFilter = _dayFilter.value,
+                period = _period.value,
+                departmentName = departmentName,
             )
-            val name = "sewa_attendance_${SewaDays.format(from)}_to_${SewaDays.format(to)}.xlsx"
-            val saved = AttendanceExport.save(getApplication(), name, sheets)
+
+            val tag = buildString {
+                append(SewaDays.format(_from.value))
+                append("_to_")
+                append(SewaDays.format(_to.value))
+                if (_dayFilter.value != DayFilter.ALL) append("_${_dayFilter.value.name.lowercase()}")
+                if (_period.value != ReportPeriod.OVERALL) append("_${_period.value.name.lowercase()}")
+            }
+            val saved = AttendanceExport.save(getApplication(), "sewa_hours_$tag.xlsx", sheets)
             _message.value = "Saved ${saved.fileName} to ${saved.location}."
         } catch (e: Exception) {
             _message.value = "Export failed: ${e.message}"

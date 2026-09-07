@@ -105,6 +105,10 @@ class SewaRepository(private val db: SewaDatabase) {
         db.attendance().find(sewadarId, SewaDays.format(date))?.let { db.attendance().delete(it.id) }
     }
 
+    /** Identities for the roster, so a report can include people who did no sewa. */
+    suspend fun rosterRefs(departmentId: Long?): List<SewadarRef> =
+        if (departmentId == null) db.sewadars().rosterRefs() else db.sewadars().rosterRefs(departmentId)
+
     suspend fun exportRows(from: LocalDate, to: LocalDate): List<ExportRow> =
         db.attendance().exportRows(SewaDays.format(from), SewaDays.format(to))
 }
