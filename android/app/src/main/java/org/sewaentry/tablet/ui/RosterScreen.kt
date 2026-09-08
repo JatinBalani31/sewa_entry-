@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -56,6 +57,7 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
     val departments by vm.departments.collectAsState()
     val backupBusy by vm.backupBusy.collectAsState()
     val needsRestart by vm.needsRestart.collectAsState()
+    var showPinSetup by remember { mutableStateOf(false) }
 
     if (needsRestart) {
         onRestoreComplete()
@@ -75,6 +77,20 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
     val restoreLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let { pendingRestoreUri = it } }
+
+    if (showPinSetup) {
+        Box(
+            Modifier.fillMaxSize().background(Background),
+            contentAlignment = Alignment.Center,
+        ) {
+            AdminGate(
+                configured = vm.pinConfigured,
+                onUnlock = { pin -> vm.unlock(pin).also { if (it) showPinSetup = false } },
+                onSetPin = { pin -> vm.setPin(pin).also { if (it) showPinSetup = false } },
+            )
+        }
+        return
+    }
 
     if (pendingRestoreUri != null) {
         AlertDialog(
@@ -174,81 +190,132 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
 
             state.plan != null -> ImportPreview(vm)
 
-            else -> Explainer()
+            else -> Explainer(
+                showPinPrompt = !vm.pinConfigured && departments.isNotEmpty(),
+                onSetPin = { showPinSetup = true },
+            )
         }
     }
 }
 
 @Composable
-private fun Explainer() {
-    Column {
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Surface),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(Modifier.padding(24.dp)) {
-                Text("Import the contact sheet", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink)
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Pick the sangat's \"List of HOD & All Sewadar Contact Detail\" workbook. " +
-                        "Every sheet is read as one department: the names, both contact numbers, " +
-                        "and the bold names as that department's HOD.",
-                    fontSize = 15.sp,
-                    color = InkMuted,
-                )
+private fun Explainer(showPinPrompt: Boolean = false, onSetPin: () -> Unit = {}) {
+    LazyColumn {
+        if (showPinPrompt) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = AmberBg),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        Modifier.padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Filled.Warning, null, tint = Amber, modifier = Modifier.size(24.dp))
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "No admin PIN set",
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Ink,
+                            )
+                            Text(
+                                "Anyone can access the Summary and Roster tabs. " +
+                                    "Set a 4-digit PIN to protect them.",
+                                fontSize = 14.sp,
+                                color = InkMuted,
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Button(
+                            onClick = onSetPin,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Navy),
+                            modifier = Modifier.height(48.dp),
+                        ) {
+                            Icon(Icons.Filled.Lock, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Set PIN", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
                 Spacer(Modifier.height(16.dp))
-                listOf(
-                    "You see exactly what will change before anything is saved.",
-                    "Re-importing an updated sheet edits the people already here — it never makes a second copy.",
-                    "Nobody is ever deleted, so recorded sewa can never be lost.",
-                ).forEach { line ->
-                    Row(Modifier.padding(bottom = 8.dp)) {
-                        Icon(
-                            Icons.Filled.CheckCircle,
-                            null,
-                            tint = ArrivalGreen,
-                            modifier = Modifier.size(18.dp).padding(top = 2.dp),
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(line, fontSize = 14.sp, color = Ink)
+            }
+        }
+
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Surface),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(24.dp)) {
+                    Text("Import the contact sheet", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink)
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Pick the sangat's \"List of HOD & All Sewadar Contact Detail\" workbook. " +
+                            "Every sheet is read as one department: the names, both contact numbers, " +
+                            "and the bold names as that department's HOD.",
+                        fontSize = 15.sp,
+                        color = InkMuted,
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    listOf(
+                        "You see exactly what will change before anything is saved.",
+                        "Re-importing an updated sheet edits the people already here — it never makes a second copy.",
+                        "Nobody is ever deleted, so recorded sewa can never be lost.",
+                    ).forEach { line ->
+                        Row(Modifier.padding(bottom = 8.dp)) {
+                            Icon(
+                                Icons.Filled.CheckCircle,
+                                null,
+                                tint = ArrivalGreen,
+                                modifier = Modifier.size(18.dp).padding(top = 2.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(line, fontSize = 14.sp, color = Ink)
+                        }
                     }
                 }
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        item { Spacer(Modifier.height(16.dp)) }
 
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Surface),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(Modifier.padding(24.dp)) {
-                Text("Backup & Restore", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink)
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "Back up the entire database — all departments, sewadars and attendance " +
-                        "records — to Google Drive or any other location. If the tablet is " +
-                        "lost or replaced, restore from the backup on the new device.",
-                    fontSize = 15.sp,
-                    color = InkMuted,
-                )
-                Spacer(Modifier.height(12.dp))
-                listOf(
-                    "Tap Backup → pick Google Drive (or any folder) → the file is saved.",
-                    "Tap Restore → pick a backup file → confirm → the tablet is restored.",
-                    "Back up regularly so no recorded sewa is ever lost.",
-                ).forEach { line ->
-                    Row(Modifier.padding(bottom = 8.dp)) {
-                        Icon(
-                            Icons.Filled.CheckCircle,
-                            null,
-                            tint = ArrivalGreen,
-                            modifier = Modifier.size(18.dp).padding(top = 2.dp),
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(line, fontSize = 14.sp, color = Ink)
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Surface),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(24.dp)) {
+                    Text("Backup & Restore", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink)
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Back up the entire database — all departments, sewadars and attendance " +
+                            "records — to Google Drive or any other location. If the tablet is " +
+                            "lost or replaced, restore from the backup on the new device.",
+                        fontSize = 15.sp,
+                        color = InkMuted,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    listOf(
+                        "Tap Backup → pick Google Drive (or any folder) → the file is saved.",
+                        "Tap Restore → pick a backup file → confirm → the tablet is restored.",
+                        "Back up regularly so no recorded sewa is ever lost.",
+                    ).forEach { line ->
+                        Row(Modifier.padding(bottom = 8.dp)) {
+                            Icon(
+                                Icons.Filled.CheckCircle,
+                                null,
+                                tint = ArrivalGreen,
+                                modifier = Modifier.size(18.dp).padding(top = 2.dp),
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(line, fontSize = 14.sp, color = Ink)
+                        }
                     }
                 }
             }

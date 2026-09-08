@@ -150,13 +150,15 @@ private fun AppShell(vm: RegisterViewModel = viewModel(), onRestoreComplete: () 
             }
 
             Box(Modifier.weight(1f)) {
+                // On a fresh tablet (no PIN configured) the admin tabs are
+                // open so the admin can import the roster and set things up.
+                // Once a PIN is set, the gate appears on every subsequent visit.
+                val needsGate = vm.pinConfigured && !unlocked
+
                 when {
                     tab == 0 -> RegisterScreen(vm)
-                    // One unlock covers both admin tabs: they are the same
-                    // person doing the same job, and asking twice would only
-                    // train everyone to keep the PIN on a sticky note.
-                    !unlocked -> AdminGate(
-                        configured = vm.pinConfigured,
+                    needsGate -> AdminGate(
+                        configured = true,
                         onUnlock = vm::unlock,
                         onSetPin = vm::setPin,
                     )
