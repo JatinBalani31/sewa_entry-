@@ -2,7 +2,9 @@
 
 The Android app that replaces the paper register on the sewa counter. It runs
 entirely on the tablet, needs no network, and is the admin console: whoever
-holds the tablet can record, correct and report on attendance.
+holds the tablet can record, correct and report on attendance. The roster is
+imported directly from the sangat's existing contact workbook, and the admin
+tabs are protected by a PIN.
 
 ### What it replaces
 
@@ -81,27 +83,28 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ./gradlew :app:testDebugUnitTest
 ```
 
-54 unit tests covering the sewa calendar, the hours arithmetic, quarter
-boundaries, department subtotals, and the spreadsheet writer. They run on the JVM — no device needed.
+64 unit tests covering the sewa calendar, the hours arithmetic, quarter
+boundaries, department subtotals, the spreadsheet writer, the roster import
+parser, and the admin PIN validation. They run on the JVM — no device needed.
 
 ---
 
 ## Using it
 
-The app opens straight into the register. There is no login: the tablet lives
-on the counter under an admin's eye, and a sign-in screen between a queue of
-sewadars and the register would only slow the line down. (See
-[Hardening the admin actions](#hardening-the-admin-actions) — this is a
-deliberate trade-off, not an oversight.)
+The app has three tabs: **Register**, **Summary** and **Roster**. The Register
+tab opens without any PIN — the tablet sits on the counter and the queue must
+not wait. The Summary and Roster tabs are behind a **4-digit admin PIN**. On
+first use the app asks the admin to choose a PIN; after that, the same PIN
+unlocks both tabs for the session. A "Lock admin" button in the header
+re-locks them.
 
 ### The register
 
 1. **Pick the day.** The bar at the top steps a day at a time, or tap it for a
    month calendar where every Wednesday and Sunday is ringed. A dot marks days
    that already have records.
-2. **Pick the department.** Accounts, BAV, Safai, Lost and Found, Traffic,
-   Luggage, Mobile, Transport, Langar are seeded on first run; add more as
-   needed.
+2. **Pick the department.** Departments come from the roster import (see
+   [The roster](#the-roster)); add more individually as needed.
 3. **Tap a name.** The action bar appears bottom-right.
 4. **Arrival**, then **Departure** — each takes a signature and fills its chip.
 
@@ -147,22 +150,18 @@ sewadar, and change or clear what is recorded.
 
 ## The quarterly summary
 
-The **Analytics** tab opens on the current quarter, because producing the
-quarterly summary is the job it exists for. Pick a year and a quarter — two
-taps — and the summary is on screen, organised department by department with a
-subtotal under each and a grand total at the bottom, which is how the
-hand-prepared one reads.
+The **Summary** tab opens on the current quarter, because producing the
+quarterly summary is the job it exists for. Four compact dropdowns along the
+top control what is shown:
 
-Quarters that have not started yet are disabled, since there is nothing to
-summarise.
-
-Everything else is a refinement of that:
-
-- **Or a range** — this month, 6 months, 1 year, all time, when the question is
-  not quarter-shaped
+- **Period** — eight rolling quarters plus "This month", "Last 6 months",
+  "Last 1 year" and "All time"
 - **Sewa days** — All / Wednesdays only / Sundays only
-- **Report** — Overall / Weekly / Monthly / Quarterly grouping
-- **Department** — narrow to one team
+- **Group by** — Overall / Weekly / Monthly / Quarterly
+- **Department** — All or narrow to one team
+
+The summary is organised department by department with a subtotal under each
+and a grand total at the bottom, which is how the hand-prepared one reads.
 
 Any grouping other than Overall shows a matrix instead: sewadars down the side,
 periods across the top, scrolling horizontally because a year of weeks is wider
@@ -192,28 +191,68 @@ to produce.
 
 ---
 
+## The roster
+
+The **Roster** tab imports the sangat's existing "List of HOD & All Sewadar
+Contact Detail" workbook — one sheet per department, names down the side, HODs
+in bold.
+
+**Import from Excel** opens a file picker. The app reads the `.xlsx` directly
+(no Apache POI — a hand-rolled SAX parser on the ZIP of XML parts) and shows a
+preview before anything is saved:
+
+- A stat bar: departments, sewadars, HODs found, sheets skipped
+- A per-sheet checklist with checkboxes, so the admin can include or exclude
+  individual departments
+- Conflict warnings when two sheets name the same department (the canonical
+  sheet is included by default; the duplicate starts excluded)
+- An "Archive anyone no longer on the sheet" checkbox — ticking it deactivates
+  sewadars whose names no longer appear, without deleting them or their
+  attendance history
+
+Re-importing an updated workbook matches by name within each department: it
+updates phone numbers and HOD status in place rather than creating duplicates.
+No sewadar is ever deleted, so recorded sewa can never be lost.
+
+The parser handles the real workbook's structural quirks: side-by-side tables
+on one sheet, blank rows between table sections, trailing spaces in names,
+scratch-copy sheets with duplicate department names, and sheets with no bold
+name (imported with no HOD marked).
+
+A new tablet starts empty — there is no seed data. The Roster tab is the first
+step: import the contact sheet and every department arrives named exactly as the
+sangat names it.
+
+---
+
 ## How it is built
 
 ```
 android/app/src/main/java/org/sewaentry/tablet/
-├── MainActivity.kt          Two-tab shell: Register | Analytics
+├── MainActivity.kt          Three-tab shell: Register | Summary | Roster
 ├── data/
 │   ├── Entities.kt          Room tables: departments, sewadars, attendance
 │   ├── Daos.kt              Queries, including the register's LEFT JOIN
-│   ├── SewaDatabase.kt      Database + first-run department seed
-│   ├── SewaRepository.kt    The only place attendance is written
+│   ├── SewaDatabase.kt      Database with migration v1→v2
+│   ├── SewaRepository.kt    Attendance writes and roster import
+│   ├── AdminLock.kt         Salted SHA-256 PIN storage
 │   ├── SewaDays.kt          The sewa calendar (Wed/Sun) and time formatting
 │   └── Reporting.kt         Pure hours arithmetic — filters, buckets, totals
 ├── export/
 │   ├── XlsxWriter.kt        Dependency-free .xlsx writer
 │   └── AttendanceExport.kt  Builds the workbook and saves to Downloads
+├── roster/
+│   ├── XlsxReader.kt        Dependency-free .xlsx reader (SAX on ZIP)
+│   └── RosterImport.kt      Workbook → ImportPlan parser
 └── ui/
     ├── RegisterScreen.kt    Tiles, action bar, arrival/departure flow
     ├── RegisterViewModel.kt All screen state and report computation
     ├── ManualTimeDialog.kt  The HH:MM stepper
     ├── SignatureDialog.kt   Finger-drawn signature capture
     ├── SewaCalendar.kt      Date bar and month picker
-    ├── StatsScreen.kt       Filters, totals table, period matrix
+    ├── StatsScreen.kt       Dropdown filters, totals table, period matrix
+    ├── RosterScreen.kt      File picker, import preview, conflict UI
+    ├── AdminGate.kt         Custom numeric keypad for PIN entry
     ├── Dialogs.kt           Add sewadar
     └── Theme.kt             Colours, shared with the web console
 ```
@@ -232,30 +271,32 @@ between teams later does not rewrite what past reports say.
 part most likely to be wrong, so it lives in `Reporting.kt` as pure functions —
 shared by the screen and the export, and unit-tested directly.
 
-**The spreadsheet writer is hand-rolled.** An `.xlsx` is a ZIP of XML parts, so
-writing one costs a few hundred lines and no dependency. Apache POI is the
-usual answer on the JVM but is a poor fit on Android: large, drags in
-`java.awt` classes the platform lacks, and pushes against the dex method limit.
-The output is verified against a real Excel library in the test suite.
+**The spreadsheet writer and reader are both hand-rolled.** An `.xlsx` is a ZIP
+of XML parts, so writing *and reading* one costs a few hundred lines each and no
+dependency. Apache POI is the usual answer on the JVM but is a poor fit on
+Android: large, drags in `java.awt` classes the platform lacks, and pushes
+against the dex method limit. The reader uses SAX parsing and resolves bold
+formatting through the xlsx styles chain (cellXfs → fonts → `<b/>`), because
+bold marks the HOD in the contact workbook.
 
 **Signatures are PNGs, base64 in the row.** Stored with the attendance record,
 so the register is self-evidencing without a separate file store.
 
+**The admin PIN is salted SHA-256 in SharedPreferences.** `AdminLock` stores a
+random salt alongside the hash and uses constant-time comparison
+(`MessageDigest.isEqual`). The PIN protects the Summary and Roster tabs; the
+Register tab stays open so the queue is never blocked.
+
+**Import matches by name, never deletes.** When re-importing an updated
+workbook, `applyImport` matches sewadars by name within each department. New
+names are added, existing names have their phone numbers and HOD status
+updated. Names that disappear from the sheet can optionally be deactivated
+(hidden from the register) but are never deleted, so attendance history is
+preserved.
+
 ---
 
 ## What to build next
-
-### Hardening the admin actions
-
-Right now **Manual entry, Clear entry and Add sewadar are unprotected** — the
-app opens straight into the admin console by design, so anyone holding the
-tablet can change a recorded time. Today that is contained by the tablet
-staying in an admin's hands.
-
-The smallest fix is a **4-digit admin PIN** on those three actions only, cached
-for the session so an admin working through a stack is not re-prompted. The
-normal arrival/departure flow stays untouched, which is the whole point — the
-queue must not slow down.
 
 ### Replacing the signature
 

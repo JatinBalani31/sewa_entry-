@@ -12,11 +12,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.InsertChart
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Tab
@@ -39,12 +42,14 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import org.sewaentry.tablet.ui.Background
 import org.sewaentry.tablet.ui.Navy
 import org.sewaentry.tablet.ui.RegisterScreen
+import org.sewaentry.tablet.ui.AdminGate
 import org.sewaentry.tablet.ui.RegisterViewModel
+import org.sewaentry.tablet.ui.RosterScreen
 import org.sewaentry.tablet.ui.SewaTheme
 import org.sewaentry.tablet.ui.StatsScreen
 
 /**
- * The whole app is one activity with two tabs. It opens straight into the
+ * The whole app is one activity with three tabs. It opens straight into the
  * register with no sign-in: the tablet lives on the sewa counter under an
  * admin's eye, and a login screen between a queue of sewadars and the register
  * would only slow the line down.
@@ -63,6 +68,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AppShell(vm: RegisterViewModel = viewModel()) {
     var tab by remember { mutableIntStateOf(0) }
+    val unlocked by vm.unlocked.collectAsState()
     val message by vm.message.collectAsState()
 
     Box(Modifier.fillMaxSize().background(Background)) {
@@ -80,6 +86,28 @@ private fun AppShell(vm: RegisterViewModel = viewModel()) {
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
+
+                Spacer(Modifier.weight(1f))
+
+                // Locking again is one tap, so the tablet can go back on the
+                // counter without waiting for the app to be closed.
+                if (unlocked) {
+                    TextButton(
+                        onClick = {
+                            vm.lockAdmin()
+                            tab = 0
+                        },
+                    ) {
+                        Icon(
+                            Icons.Filled.Lock,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Lock admin", color = Color.White, fontWeight = FontWeight.SemiBold)
+                    }
+                }
             }
 
             TabRow(selectedTabIndex = tab, containerColor = Color.White, contentColor = Navy) {
@@ -92,15 +120,40 @@ private fun AppShell(vm: RegisterViewModel = viewModel()) {
                 Tab(
                     selected = tab == 1,
                     onClick = { tab = 1 },
-                    text = { Text("Analytics", fontWeight = FontWeight.SemiBold) },
-                    icon = { Icon(Icons.Filled.InsertChart, contentDescription = null) },
+                    text = { Text("Summary", fontWeight = FontWeight.SemiBold) },
+                    icon = {
+                        Icon(
+                            if (unlocked) Icons.Filled.InsertChart else Icons.Filled.Lock,
+                            contentDescription = null,
+                        )
+                    },
+                )
+                Tab(
+                    selected = tab == 2,
+                    onClick = { tab = 2 },
+                    text = { Text("Roster", fontWeight = FontWeight.SemiBold) },
+                    icon = {
+                        Icon(
+                            if (unlocked) Icons.Filled.Groups else Icons.Filled.Lock,
+                            contentDescription = null,
+                        )
+                    },
                 )
             }
 
             Box(Modifier.weight(1f)) {
-                when (tab) {
-                    0 -> RegisterScreen(vm)
-                    else -> StatsScreen(vm)
+                when {
+                    tab == 0 -> RegisterScreen(vm)
+                    // One unlock covers both admin tabs: they are the same
+                    // person doing the same job, and asking twice would only
+                    // train everyone to keep the PIN on a sticky note.
+                    !unlocked -> AdminGate(
+                        configured = vm.pinConfigured,
+                        onUnlock = vm::unlock,
+                        onSetPin = vm::setPin,
+                    )
+                    tab == 1 -> StatsScreen(vm)
+                    else -> RosterScreen(vm)
                 }
             }
         }

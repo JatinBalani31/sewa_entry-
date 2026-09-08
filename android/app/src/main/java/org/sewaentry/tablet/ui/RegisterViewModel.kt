@@ -1,6 +1,7 @@
 package org.sewaentry.tablet.ui
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -14,6 +15,9 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import org.sewaentry.tablet.data.AdminLock
 import org.sewaentry.tablet.data.DayFilter
 import org.sewaentry.tablet.data.DepartmentEntity
 import org.sewaentry.tablet.data.DepartmentGroup
@@ -28,6 +32,9 @@ import org.sewaentry.tablet.data.SewaRepository
 import org.sewaentry.tablet.data.SewadarTotals
 import org.sewaentry.tablet.data.SewadarWithStatus
 import org.sewaentry.tablet.export.AttendanceExport
+import org.sewaentry.tablet.roster.ImportPlan
+import org.sewaentry.tablet.roster.RosterImport
+import org.sewaentry.tablet.roster.XlsxReader
 import java.time.LocalDate
 
 /** Everything the summary tab needs, recomputed whenever a filter changes. */
@@ -185,11 +192,30 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
     val period: StateFlow<ReportPeriod> = _period.asStateFlow()
     val reportDepartmentId: StateFlow<Long?> = _reportDepartmentId.asStateFlow()
 
+    /**
+     * What the period dropdown reads. Held rather than derived, because
+     * "this quarter" and "2026 Q3" can be the same dates but are not the same
+     * choice, and the label should say which one was picked.
+     */
+    private val _periodLabel = MutableStateFlow(Quarter.current().label)
+    val periodLabel: StateFlow<String> = _periodLabel.asStateFlow()
+
     /** Picking a quarter sets the whole range — one choice, not two dates. */
     fun selectQuarter(value: Quarter) {
         _quarter.value = value
         _from.value = value.start
         _to.value = value.end
+        _periodLabel.value = value.label
+    }
+
+    /** A span that is not quarter-shaped: this month, a year, everything. */
+    fun selectRange(label: String, from: LocalDate, to: LocalDate) {
+        _from.value = from
+        _to.value = to
+        _periodLabel.value = label
+        // Keep the quarter pointing at wherever the range ends, so the export's
+        // month columns still line up with the period on screen.
+        _quarter.value = Quarter.of(to)
     }
 
     /**
@@ -240,6 +266,104 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
         _reportDepartmentId.value = id
     }
 
+    // --- Admin lock --------------------------------------------------------
+
+    private val lock = AdminLock(app)
+
+    private val _unlocked = MutableStateFlow(false)
+    val unlocked: StateFlow<Boolean> = _unlocked.asStateFlow()
+
+    /** False until someone sets a PIN — the first visit asks them to choose one. */
+    val pinConfigured: Boolean get() = lock.isConfigured
+
+    /** @return false if the PIN was wrong, so the screen can say so. */
+    fun unlock(pin: String): Boolean {
+        val ok = lock.check(pin)
+        if (ok) _unlocked.value = true
+        return ok
+    }
+
+    fun setPin(pin: String): Boolean {
+        val ok = lock.setPin(pin)
+        if (ok) _unlocked.value = true
+        return ok
+    }
+
+    fun changePin(current: String, next: String): Boolean = lock.changePin(current, next)
+
+    /** Locks the admin area again — used when the tablet goes back on the counter. */
+    fun lockAdmin() {
+        _unlocked.value = false
+    }
+
+    // --- Roster import -----------------------------------------------------
+
+    private val _import = MutableStateFlow(ImportUiState())
+    val importState: StateFlow<ImportUiState> = _import.asStateFlow()
+
+    /**
+     * Reads a chosen .xlsx and shows what it would do. Nothing is written until
+     * the admin confirms, so a wrong file costs nothing.
+     */
+    fun previewImport(uri: Uri) = viewModelScope.launch {
+        _import.value = ImportUiState(loading = true)
+        val result = withContext(Dispatchers.IO) {
+            runCatching {
+                val resolver = getApplication<Application>().contentResolver
+                val stream = resolver.openInputStream(uri)
+                    ?: throw IllegalArgumentException("That file could not be opened.")
+                stream.use { RosterImport.parse(XlsxReader.read(it)) }
+            }
+        }
+        result.fold(
+            onSuccess = { plan ->
+                _import.value = ImportUiState(
+                    plan = plan,
+                    selection = plan.defaultSelection,
+                    fileName = uri.lastPathSegment?.substringAfterLast('/'),
+                )
+            },
+            onFailure = { error ->
+                _import.value = ImportUiState(
+                    error = error.message ?: "That file could not be read as a spreadsheet.",
+                )
+            },
+        )
+    }
+
+    fun toggleImportSheet(sheet: String) {
+        val state = _import.value
+        val next = if (sheet in state.selection) state.selection - sheet else state.selection + sheet
+        _import.value = state.copy(selection = next)
+    }
+
+    fun setDeactivateMissing(value: Boolean) {
+        _import.value = _import.value.copy(deactivateMissing = value)
+    }
+
+    fun clearImport() {
+        _import.value = ImportUiState()
+    }
+
+    fun confirmImport() = viewModelScope.launch {
+        val state = _import.value
+        val plan = state.plan ?: return@launch
+        _import.value = state.copy(applying = true)
+
+        val result = runCatching {
+            repo.applyImport(plan.departments(state.selection), state.deactivateMissing)
+        }
+        result.fold(
+            onSuccess = {
+                _import.value = ImportUiState()
+                _message.value = "Roster imported - ${it.summary}"
+            },
+            onFailure = {
+                _import.value = state.copy(applying = false, error = it.message ?: "Import failed.")
+            },
+        )
+    }
+
     fun exportExcel() = viewModelScope.launch {
         try {
             val state = report.value
@@ -274,4 +398,17 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
             _message.value = "Export failed: ${e.message}"
         }
     }
+}
+
+/** The import wizard's state: read a file, review, confirm. */
+data class ImportUiState(
+    val plan: ImportPlan? = null,
+    val selection: Set<String> = emptySet(),
+    val fileName: String? = null,
+    val deactivateMissing: Boolean = false,
+    val loading: Boolean = false,
+    val applying: Boolean = false,
+    val error: String? = null,
+) {
+    val isOpen: Boolean get() = plan != null || loading || error != null
 }

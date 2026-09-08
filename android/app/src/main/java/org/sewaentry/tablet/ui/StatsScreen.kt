@@ -1,5 +1,6 @@
 package org.sewaentry.tablet.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.Button
@@ -40,6 +42,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.sewaentry.tablet.data.DayFilter
@@ -62,12 +66,11 @@ import java.time.LocalDate
 fun StatsScreen(vm: RegisterViewModel) {
     val state by vm.report.collectAsState()
     val quarter by vm.quarter.collectAsState()
-    val from by vm.from.collectAsState()
-    val to by vm.to.collectAsState()
     val dayFilter by vm.dayFilter.collectAsState()
     val period by vm.period.collectAsState()
     val departments by vm.departments.collectAsState()
     val reportDept by vm.reportDepartmentId.collectAsState()
+    val periodLabel by vm.periodLabel.collectAsState()
 
     Column(Modifier.fillMaxSize().background(Background).padding(16.dp)) {
 
@@ -102,65 +105,53 @@ fun StatsScreen(vm: RegisterViewModel) {
         Spacer(Modifier.height(14.dp))
 
         // --- Filters ---------------------------------------------------------
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Surface),
-            modifier = Modifier.fillMaxWidth(),
+        // Four dropdowns on one line rather than five rows of chips: the
+        // summary itself is what the screen is for, so the controls give the
+        // table back its room.
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.padding(16.dp)) {
-                // The quarter is the primary control: picking one sets the
-                // whole reporting period, because "the Q3 summary" is the
-                // thing being produced.
-                FilterRow("Quarter") {
-                    QuarterStepper(
-                        quarter = quarter,
-                        onSelect = vm::selectQuarter,
-                    )
-                }
+            FilterDropdown(
+                label = "Period",
+                value = periodLabel,
+                modifier = Modifier.weight(1.2f),
+                options = periodOptions(),
+                isSelected = { it.label == periodLabel },
+                onSelect = { option -> option.apply(vm) },
+                render = { it.label },
+            )
 
-                Spacer(Modifier.height(12.dp))
+            FilterDropdown(
+                label = "Sewa days",
+                value = dayFilter.label,
+                modifier = Modifier.weight(1f),
+                options = DayFilter.entries.toList(),
+                isSelected = { it == dayFilter },
+                onSelect = vm::setDayFilter,
+                render = { it.label },
+            )
 
-                FilterRow("Or a range") {
-                    RangeChip("This month", from == LocalDate.now().withDayOfMonth(1)) {
-                        vm.setRange(LocalDate.now().withDayOfMonth(1), LocalDate.now())
-                    }
-                    RangeChip("6 months", from == LocalDate.now().minusMonths(6)) {
-                        vm.setRange(LocalDate.now().minusMonths(6), LocalDate.now())
-                    }
-                    RangeChip("1 year", from == LocalDate.now().minusYears(1)) {
-                        vm.setRange(LocalDate.now().minusYears(1), LocalDate.now())
-                    }
-                    RangeChip("All time", from.year <= 2000) {
-                        vm.setRange(LocalDate.of(2000, 1, 1), LocalDate.now())
-                    }
-                }
+            FilterDropdown(
+                label = "Group by",
+                value = period.label,
+                modifier = Modifier.weight(1f),
+                options = ReportPeriod.entries.toList(),
+                isSelected = { it == period },
+                onSelect = vm::setPeriod,
+                render = { it.label },
+            )
 
-                Spacer(Modifier.height(12.dp))
-
-                FilterRow("Sewa days") {
-                    DayFilter.entries.forEach { option ->
-                        RangeChip(option.label, dayFilter == option) { vm.setDayFilter(option) }
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
-
-                FilterRow("Report") {
-                    ReportPeriod.entries.forEach { option ->
-                        RangeChip(option.label, period == option) { vm.setPeriod(option) }
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
-
-                FilterRow("Department") {
-                    DepartmentPicker(
-                        departments = departments.map { it.id to it.name },
-                        selectedId = reportDept,
-                        onSelect = vm::setReportDepartment,
-                    )
-                }
-            }
+            FilterDropdown(
+                label = "Department",
+                value = departments.firstOrNull { it.id == reportDept }?.name ?: "All departments",
+                modifier = Modifier.weight(1.3f),
+                options = listOf<Long?>(null) + departments.map { it.id },
+                isSelected = { it == reportDept },
+                onSelect = vm::setReportDepartment,
+                render = { id -> departments.firstOrNull { it.id == id }?.name ?: "All departments" },
+            )
         }
 
         Spacer(Modifier.height(14.dp))
@@ -220,142 +211,121 @@ fun StatsScreen(vm: RegisterViewModel) {
     }
 }
 
+/**
+ * A labelled dropdown. Generic over the option type so the four filters share
+ * one control and therefore one set of behaviours — a tablet-sized touch
+ * target, the current value visible without opening it, and a tick against
+ * whatever is selected.
+ */
 @Composable
-private fun FilterRow(label: String, content: @Composable () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun <T> FilterDropdown(
+    label: String,
+    value: String,
+    options: List<T>,
+    isSelected: (T) -> Boolean,
+    onSelect: (T) -> Unit,
+    render: (T) -> String,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(modifier) {
         Text(
             label.uppercase(),
-            Modifier.width(120.dp),
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             color = InkMuted,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { content() }
-    }
-}
-
-/** Year stepper plus the four quarters — two taps to any summary. */
-@Composable
-private fun QuarterStepper(quarter: Quarter, onSelect: (Quarter) -> Unit) {
-    val thisQuarter = Quarter.current()
-
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Button(
-            onClick = { onSelect(Quarter(quarter.year - 1, quarter.quarter)) },
-            shape = RoundedCornerShape(999.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = SurfaceAlt, contentColor = Navy),
-            contentPadding = PaddingValues(horizontal = 14.dp),
-            modifier = Modifier.height(50.dp),
-        ) { Text("<", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
-
-        Text(
-            quarter.year.toString(),
-            Modifier.padding(horizontal = 14.dp),
-            fontSize = 19.sp,
-            fontWeight = FontWeight.Bold,
-            color = Ink,
-        )
-
-        Button(
-            onClick = { onSelect(Quarter(quarter.year + 1, quarter.quarter)) },
-            shape = RoundedCornerShape(999.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = SurfaceAlt, contentColor = Navy),
-            contentPadding = PaddingValues(horizontal = 14.dp),
-            // A quarter that has not started yet has nothing to summarise.
-            enabled = quarter.year < thisQuarter.year,
-            modifier = Modifier.height(50.dp),
-        ) { Text(">", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
-
-        Spacer(Modifier.width(16.dp))
-
-        (1..4).forEach { q ->
-            val candidate = Quarter(quarter.year, q)
-            val future = candidate.start.isAfter(LocalDate.now())
-            Row {
-                Button(
-                    onClick = { onSelect(candidate) },
-                    enabled = !future,
-                    shape = RoundedCornerShape(999.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (quarter.quarter == q) Navy else SurfaceAlt,
-                        contentColor = if (quarter.quarter == q) Color.White else InkMuted,
-                        disabledContainerColor = SurfaceAlt,
-                        disabledContentColor = Line,
-                    ),
-                    contentPadding = PaddingValues(horizontal = 22.dp),
-                    modifier = Modifier.height(50.dp),
-                ) {
-                    Text("Q$q", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                }
-                Spacer(Modifier.width(8.dp))
-            }
-        }
-
-        if (quarter != thisQuarter) {
+        Spacer(Modifier.height(4.dp))
+        Box {
             Button(
-                onClick = { onSelect(thisQuarter) },
-                shape = RoundedCornerShape(999.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = ArrivalGreenBg, contentColor = ArrivalGreen),
-                contentPadding = PaddingValues(horizontal = 18.dp),
-                modifier = Modifier.height(50.dp),
-            ) { Text("This quarter", fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
-        }
-    }
-}
-
-@Composable
-private fun RangeChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    Button(
-        onClick = onClick,
-        shape = RoundedCornerShape(999.dp),
-        colors = ButtonDefaults.buttonColors(
-            containerColor = if (selected) Navy else SurfaceAlt,
-            contentColor = if (selected) Color.White else InkMuted,
-        ),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-        modifier = Modifier.height(50.dp),
-    ) { Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
-}
-
-@Composable
-private fun DepartmentPicker(
-    departments: List<Pair<Long, String>>,
-    selectedId: Long?,
-    onSelect: (Long?) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val label = departments.firstOrNull { it.first == selectedId }?.second ?: "All departments"
-
-    Box {
-        Button(
-            onClick = { expanded = true },
-            shape = RoundedCornerShape(999.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = SurfaceAlt, contentColor = Ink),
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-            modifier = Modifier.height(50.dp),
-        ) {
-            Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.width(6.dp))
-            Icon(Icons.Filled.ExpandMore, contentDescription = null, modifier = Modifier.size(20.dp))
-        }
-
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(
-                text = { Text("All departments", fontSize = 17.sp) },
-                onClick = { onSelect(null); expanded = false },
-            )
-            departments.forEach { (id, name) ->
-                DropdownMenuItem(
-                    text = { Text(name, fontSize = 17.sp) },
-                    onClick = { onSelect(id); expanded = false },
+                onClick = { expanded = true },
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Surface, contentColor = Ink),
+                border = BorderStroke(1.dp, Line),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                modifier = Modifier.fillMaxWidth().height(54.dp),
+            ) {
+                Text(
+                    value,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Start,
                 )
+                Icon(Icons.Filled.ExpandMore, contentDescription = null, modifier = Modifier.size(20.dp))
+            }
+
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                options.forEach { option ->
+                    val selected = isSelected(option)
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                render(option),
+                                fontSize = 15.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selected) Navy else Ink,
+                            )
+                        },
+                        trailingIcon = {
+                            if (selected) {
+                                Icon(Icons.Filled.Check, null, tint = Navy, modifier = Modifier.size(18.dp))
+                            }
+                        },
+                        onClick = {
+                            expanded = false
+                            onSelect(option)
+                        },
+                    )
+                }
             }
         }
     }
 }
 
+/**
+ * One choice of reporting period.
+ *
+ * Quarters and spans live in the same list because they answer the same
+ * question — how far back does this summary reach — and splitting them across
+ * two controls only made the admin decide which control to look in first.
+ */
+private class PeriodOption(val label: String, val apply: (RegisterViewModel) -> Unit)
+
+/**
+ * The current quarter and the seven before it, then the spans. Eight quarters
+ * is two years of summaries, which is further back than anyone reprints.
+ */
 @Composable
-private fun StatTile(label: String, value: String, modifier: Modifier = Modifier, accent: Color? = null) {
+private fun periodOptions(): List<PeriodOption> {
+    val today = LocalDate.now()
+    val current = Quarter.current()
+
+    val quarters = (0 until 8).map { back ->
+        val index = current.year * 4 + (current.quarter - 1) - back
+        Quarter(index / 4, index % 4 + 1)
+    }
+
+    return quarters.map { q -> PeriodOption(q.label) { vm -> vm.selectQuarter(q) } } + listOf(
+        PeriodOption("This month") { vm ->
+            vm.selectRange("This month", today.withDayOfMonth(1), today)
+        },
+        PeriodOption("Last 6 months") { vm ->
+            vm.selectRange("Last 6 months", today.minusMonths(6), today)
+        },
+        PeriodOption("Last 1 year") { vm ->
+            vm.selectRange("Last 1 year", today.minusYears(1), today)
+        },
+        PeriodOption("All time") { vm ->
+            vm.selectRange("All time", LocalDate.of(2000, 1, 1), today)
+        },
+    )
+}
+@Composable
+internal fun StatTile(label: String, value: String, modifier: Modifier = Modifier, accent: Color? = null) {
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Surface),

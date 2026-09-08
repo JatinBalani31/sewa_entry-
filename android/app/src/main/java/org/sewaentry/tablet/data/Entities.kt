@@ -47,6 +47,17 @@ data class SewadarEntity(
     val name: String,
     val departmentId: Long?,
     val phone: String? = null,
+    /** The contact sheet carries up to two numbers per sewadar. */
+    @ColumnInfo(defaultValue = "NULL")
+    val phone2: String? = null,
+    /**
+     * Head of department — taken from the bold names in the sangat's contact
+     * sheet, where bold is how the HOD has always been marked. Carries no
+     * privileges today; it is recorded so the register can show who leads a
+     * team without anyone having to remember.
+     */
+    @ColumnInfo(defaultValue = "0")
+    val isHod: Boolean = false,
     val isActive: Boolean = true,
 )
 
@@ -102,6 +113,7 @@ data class SewadarWithStatus(
     val name: String,
     val departmentId: Long?,
     val departmentName: String?,
+    val isHod: Boolean,
     val attendanceId: Long?,
     val arrivalAt: Long?,
     val departureAt: Long?,

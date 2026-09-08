@@ -322,6 +322,22 @@ private fun SewadarTile(
                 overflow = TextOverflow.Ellipsis,
             )
 
+            // The contact sheet marks the HOD in bold; carrying that onto the
+            // tile means whoever is on the counter can see who leads a team
+            // without having to know the department.
+            if (sewadar.isHod) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "HOD",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Navy,
+                    modifier = Modifier
+                        .background(SurfaceAlt, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                )
+            }
+
             Spacer(Modifier.weight(1f))
 
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -531,15 +547,25 @@ private fun EmptyRoster(hasDepartment: Boolean) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                if (hasDepartment) "No sewadars in this department yet" else "Choose a department to begin",
+                // With no departments at all this is a tablet that has not been
+                // set up yet, so it points at the import rather than at a
+                // department picker with nothing in it.
+                if (hasDepartment) "No sewadars in this department yet" else "No departments yet",
                 fontSize = 20.sp,
                 color = InkMuted,
                 fontWeight = FontWeight.SemiBold,
             )
-            if (hasDepartment) {
-                Spacer(Modifier.height(8.dp))
-                Text("Use \"Add sewadar\" to build the roster.", fontSize = 16.sp, color = InkMuted)
-            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (hasDepartment) {
+                    "Use \"Add sewadar\", or import the contact sheet from the Roster tab."
+                } else {
+                    "Open the Roster tab and import the sangat's contact sheet - " +
+                        "every department and sewadar arrives at once."
+                },
+                fontSize = 16.sp,
+                color = InkMuted,
+            )
         }
     }
 }

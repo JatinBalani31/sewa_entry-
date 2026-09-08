@@ -23,6 +23,13 @@ interface DepartmentDao {
 
     @Update
     suspend fun update(department: DepartmentEntity)
+
+    /** Case-insensitive, so "Account" from the sheet finds an existing "account". */
+    @Query("SELECT * FROM departments WHERE name = :name COLLATE NOCASE LIMIT 1")
+    suspend fun findByName(name: String): DepartmentEntity?
+
+    @Query("SELECT MAX(sortOrder) FROM departments")
+    suspend fun maxSortOrder(): Int?
 }
 
 @Dao
@@ -40,6 +47,23 @@ interface SewadarDao {
     fun observeActive(): Flow<List<SewadarEntity>>
 
     /**
+     * Matched on name within a department, so re-importing an updated contact
+     * sheet edits the person who is already there instead of creating a second
+     * copy — which would strand every attendance record they have.
+     */
+    @Query("SELECT * FROM sewadars WHERE departmentId = :departmentId AND name = :name COLLATE NOCASE LIMIT 1")
+    suspend fun findInDepartment(departmentId: Long, name: String): SewadarEntity?
+
+    @Query("SELECT * FROM sewadars WHERE departmentId = :departmentId")
+    suspend fun inDepartment(departmentId: Long): List<SewadarEntity>
+
+    @Query("UPDATE sewadars SET isActive = 0 WHERE id IN (:ids)")
+    suspend fun deactivate(ids: List<Long>)
+
+    @Query("SELECT COUNT(*) FROM sewadars WHERE isActive = 1")
+    suspend fun activeCount(): Int
+
+    /**
      * The register grid: every active sewadar in a department, each carrying
      * whatever has been recorded for them on this date. A LEFT JOIN so someone
      * with nothing recorded yet still appears — that is the normal case at the
@@ -51,6 +75,7 @@ interface SewadarDao {
                s.name          AS name,
                s.departmentId  AS departmentId,
                d.name          AS departmentName,
+               s.isHod         AS isHod,
                a.id            AS attendanceId,
                a.arrivalAt     AS arrivalAt,
                a.departureAt   AS departureAt,
