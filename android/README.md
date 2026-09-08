@@ -94,9 +94,52 @@ parser, and the admin PIN validation. They run on the JVM — no device needed.
 The app has three tabs: **Register**, **Summary** and **Roster**. The Register
 tab opens without any PIN — the tablet sits on the counter and the queue must
 not wait. The Summary and Roster tabs are behind a **4-digit admin PIN**. On
-first use the app asks the admin to choose a PIN; after that, the same PIN
-unlocks both tabs for the session. A "Lock admin" button in the header
-re-locks them.
+first use the admin tabs are open (there is nothing to protect yet); once a
+PIN is set, the same PIN unlocks both tabs for the session. A "Lock admin"
+button in the header re-locks them.
+
+The app opens in **portrait** by default and follows the system auto-rotate
+setting, so it switches to landscape when the tablet is turned sideways.
+
+### First-time setup (admin)
+
+A fresh install starts with no departments, no sewadars, and no PIN. Follow
+these steps to make the tablet ready for the sewa counter:
+
+1. **Install the APK.**
+   Transfer `app-debug.apk` to the tablet and open it, or use ADB:
+   ```
+   adb install app-debug.apk
+   ```
+
+2. **Go to the Roster tab.**
+   On a fresh tablet with no PIN configured, all three tabs are accessible.
+   Tap the **Roster** tab.
+
+3. **Import the sewadar roster.**
+   Tap **Import from Excel** and pick the sangat's contact workbook
+   ("List of HOD & All Sewadar Contact Detail"). The app reads every sheet
+   as a department, detects HODs from bold names, and shows a preview. Check
+   the departments, then tap **Import N sewadars**.
+
+4. **Set the admin PIN.**
+   After the import, an amber banner at the top of the Roster tab says
+   "No admin PIN set." Tap **Set PIN**, choose a 4-digit PIN, and confirm it.
+   From now on, the Summary and Roster tabs are locked behind that PIN.
+
+5. **Back up to Google Drive.**
+   Still on the Roster tab, tap **Backup**. The Android file picker opens —
+   choose **Google Drive** (or any location). The database file is saved. Do
+   this regularly so no recorded sewa is ever lost.
+
+6. **Place the tablet on the counter.**
+   Tap **Lock admin** in the top bar. The Register tab is now the only one
+   accessible without the PIN. The tablet is ready for the queue.
+
+**To restore on a new tablet:** Install the APK, go to the Roster tab, tap
+**Restore**, pick the backup file from Google Drive, and confirm. The app
+restarts with all departments, sewadars, and attendance records from the
+backup.
 
 ### The register
 
