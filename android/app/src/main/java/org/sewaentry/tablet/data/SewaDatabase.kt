@@ -25,6 +25,11 @@ abstract class SewaDatabase : RoomDatabase() {
             instance ?: build(context.applicationContext).also { instance = it }
         }
 
+        fun close() = synchronized(this) {
+            instance?.close()
+            instance = null
+        }
+
         /**
          * Adds the two columns the roster import fills in. Written out rather
          * than falling back to a destructive migration, because by the time

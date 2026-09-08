@@ -1,5 +1,6 @@
 package org.sewaentry.tablet
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -59,14 +60,21 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             SewaTheme {
-                AppShell()
+                AppShell(onRestoreComplete = ::restart)
             }
         }
+    }
+
+    private fun restart() {
+        val intent = packageManager.getLaunchIntentForPackage(packageName)!!
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        startActivity(intent)
+        Runtime.getRuntime().exit(0)
     }
 }
 
 @Composable
-private fun AppShell(vm: RegisterViewModel = viewModel()) {
+private fun AppShell(vm: RegisterViewModel = viewModel(), onRestoreComplete: () -> Unit = {}) {
     var tab by remember { mutableIntStateOf(0) }
     val unlocked by vm.unlocked.collectAsState()
     val message by vm.message.collectAsState()
@@ -153,7 +161,7 @@ private fun AppShell(vm: RegisterViewModel = viewModel()) {
                         onSetPin = vm::setPin,
                     )
                     tab == 1 -> StatsScreen(vm)
-                    else -> RosterScreen(vm)
+                    else -> RosterScreen(vm, onRestoreComplete = onRestoreComplete)
                 }
             }
         }

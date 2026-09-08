@@ -19,9 +19,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -32,9 +35,13 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -43,28 +50,58 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.sewaentry.tablet.roster.ParsedSheet
 
-/**
- * Loading the sangat's roster from the contact workbook.
- *
- * The sangat already maintains "List of HOD & All Sewadar Contact Detail" — one
- * sheet per department, names down the side, the HOD in bold. Rather than
- * asking anyone to retype 400-odd names into a tablet, the app reads that file
- * as it is.
- *
- * Nothing is written until the admin has seen exactly what would happen, sheet
- * by sheet, and pressed the button.
- */
 @Composable
-fun RosterScreen(vm: RegisterViewModel) {
+fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
     val state by vm.importState.collectAsState()
     val departments by vm.departments.collectAsState()
+    val backupBusy by vm.backupBusy.collectAsState()
+    val needsRestart by vm.needsRestart.collectAsState()
+
+    if (needsRestart) {
+        onRestoreComplete()
+        return
+    }
 
     val picker = rememberLauncherForActivityResult(
-        // Any file: some file managers hand back a generic MIME type for an
-        // .xlsx, and a filter that hides the file the admin is looking at is
-        // worse than one that lets them pick the wrong thing and be told.
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let { vm.previewImport(it) } }
+
+    val backupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri -> uri?.let { vm.backupTo(it) } }
+
+    var pendingRestoreUri by remember { mutableStateOf<android.net.Uri?>(null) }
+
+    val restoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let { pendingRestoreUri = it } }
+
+    if (pendingRestoreUri != null) {
+        AlertDialog(
+            onDismissRequest = { pendingRestoreUri = null },
+            title = { Text("Restore from backup?", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "This replaces everything on the tablet — all departments, sewadars and " +
+                        "attendance records — with whatever is in the backup file. The app " +
+                        "will restart afterwards.\n\nThis cannot be undone.",
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val uri = pendingRestoreUri!!
+                        pendingRestoreUri = null
+                        vm.restoreFrom(uri)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = DepartureRed),
+                ) { Text("Restore", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRestoreUri = null }) { Text("Cancel") }
+            },
+        )
+    }
 
     Column(Modifier.fillMaxSize().background(Background).padding(16.dp)) {
 
@@ -77,15 +114,46 @@ fun RosterScreen(vm: RegisterViewModel) {
                     color = InkMuted,
                 )
             }
+
+            OutlinedButton(
+                onClick = { restoreLauncher.launch(arrayOf("*/*")) },
+                enabled = !backupBusy,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.height(52.dp),
+            ) {
+                Icon(Icons.Filled.CloudDownload, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Restore", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            }
+
+            Spacer(Modifier.width(10.dp))
+
+            OutlinedButton(
+                onClick = { backupLauncher.launch(vm.backupFileName) },
+                enabled = !backupBusy,
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.height(52.dp),
+            ) {
+                if (backupBusy) {
+                    CircularProgressIndicator(color = Navy, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(Icons.Filled.Backup, contentDescription = null, modifier = Modifier.size(20.dp))
+                }
+                Spacer(Modifier.width(8.dp))
+                Text("Backup", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+            }
+
+            Spacer(Modifier.width(10.dp))
+
             Button(
                 onClick = { picker.launch(arrayOf("*/*")) },
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Navy),
-                modifier = Modifier.height(62.dp).width(260.dp),
+                modifier = Modifier.height(52.dp).width(240.dp),
             ) {
-                Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(22.dp))
-                Spacer(Modifier.width(10.dp))
-                Text("Import from Excel", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Import from Excel", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
         }
 
@@ -113,36 +181,75 @@ fun RosterScreen(vm: RegisterViewModel) {
 
 @Composable
 private fun Explainer() {
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Surface),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(24.dp)) {
-            Text("Import the contact sheet", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink)
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "Pick the sangat's \"List of HOD & All Sewadar Contact Detail\" workbook. " +
-                    "Every sheet is read as one department: the names, both contact numbers, " +
-                    "and the bold names as that department's HOD.",
-                fontSize = 15.sp,
-                color = InkMuted,
-            )
-            Spacer(Modifier.height(16.dp))
-            listOf(
-                "You see exactly what will change before anything is saved.",
-                "Re-importing an updated sheet edits the people already here — it never makes a second copy.",
-                "Nobody is ever deleted, so recorded sewa can never be lost.",
-            ).forEach { line ->
-                Row(Modifier.padding(bottom = 8.dp)) {
-                    Icon(
-                        Icons.Filled.CheckCircle,
-                        null,
-                        tint = ArrivalGreen,
-                        modifier = Modifier.size(18.dp).padding(top = 2.dp),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Text(line, fontSize = 14.sp, color = Ink)
+    Column {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Surface),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(24.dp)) {
+                Text("Import the contact sheet", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink)
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Pick the sangat's \"List of HOD & All Sewadar Contact Detail\" workbook. " +
+                        "Every sheet is read as one department: the names, both contact numbers, " +
+                        "and the bold names as that department's HOD.",
+                    fontSize = 15.sp,
+                    color = InkMuted,
+                )
+                Spacer(Modifier.height(16.dp))
+                listOf(
+                    "You see exactly what will change before anything is saved.",
+                    "Re-importing an updated sheet edits the people already here — it never makes a second copy.",
+                    "Nobody is ever deleted, so recorded sewa can never be lost.",
+                ).forEach { line ->
+                    Row(Modifier.padding(bottom = 8.dp)) {
+                        Icon(
+                            Icons.Filled.CheckCircle,
+                            null,
+                            tint = ArrivalGreen,
+                            modifier = Modifier.size(18.dp).padding(top = 2.dp),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(line, fontSize = 14.sp, color = Ink)
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Surface),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(24.dp)) {
+                Text("Backup & Restore", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink)
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Back up the entire database — all departments, sewadars and attendance " +
+                        "records — to Google Drive or any other location. If the tablet is " +
+                        "lost or replaced, restore from the backup on the new device.",
+                    fontSize = 15.sp,
+                    color = InkMuted,
+                )
+                Spacer(Modifier.height(12.dp))
+                listOf(
+                    "Tap Backup → pick Google Drive (or any folder) → the file is saved.",
+                    "Tap Restore → pick a backup file → confirm → the tablet is restored.",
+                    "Back up regularly so no recorded sewa is ever lost.",
+                ).forEach { line ->
+                    Row(Modifier.padding(bottom = 8.dp)) {
+                        Icon(
+                            Icons.Filled.CheckCircle,
+                            null,
+                            tint = ArrivalGreen,
+                            modifier = Modifier.size(18.dp).padding(top = 2.dp),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(line, fontSize = 14.sp, color = Ink)
+                    }
                 }
             }
         }
@@ -326,4 +433,3 @@ private fun Notice(text: String) {
 private fun Centered(content: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { content() }
 }
-

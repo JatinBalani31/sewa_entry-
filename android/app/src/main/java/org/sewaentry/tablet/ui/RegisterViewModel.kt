@@ -18,6 +18,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import org.sewaentry.tablet.data.AdminLock
+import org.sewaentry.tablet.data.BackupManager
 import org.sewaentry.tablet.data.DayFilter
 import org.sewaentry.tablet.data.DepartmentEntity
 import org.sewaentry.tablet.data.DepartmentGroup
@@ -294,6 +295,49 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
     /** Locks the admin area again — used when the tablet goes back on the counter. */
     fun lockAdmin() {
         _unlocked.value = false
+    }
+
+    // --- Backup / Restore --------------------------------------------------
+
+    private val _backupBusy = MutableStateFlow(false)
+    val backupBusy: StateFlow<Boolean> = _backupBusy.asStateFlow()
+
+    /** Suggested file name for the "save as" dialog. */
+    val backupFileName: String get() = BackupManager.suggestedFileName()
+
+    fun backupTo(uri: Uri) = viewModelScope.launch {
+        _backupBusy.value = true
+        val result = withContext(Dispatchers.IO) {
+            runCatching { BackupManager.backupTo(getApplication(), uri) }
+        }
+        _backupBusy.value = false
+        result.fold(
+            onSuccess = { _message.value = "Backup saved. Store it on Google Drive or a safe location." },
+            onFailure = { _message.value = "Backup failed: ${it.message}" },
+        )
+    }
+
+    /**
+     * Restores from a backup file. After overwriting the database the process
+     * must restart so Room picks up the new file — we use the activity's
+     * recreate() for that, triggered by [needsRestart].
+     */
+    private val _needsRestart = MutableStateFlow(false)
+    val needsRestart: StateFlow<Boolean> = _needsRestart.asStateFlow()
+
+    fun restoreFrom(uri: Uri) = viewModelScope.launch {
+        _backupBusy.value = true
+        val result = withContext(Dispatchers.IO) {
+            runCatching { BackupManager.restoreFrom(getApplication(), uri) }
+        }
+        _backupBusy.value = false
+        result.fold(
+            onSuccess = {
+                _message.value = "Database restored. Restarting…"
+                _needsRestart.value = true
+            },
+            onFailure = { _message.value = "Restore failed: ${it.message}" },
+        )
     }
 
     // --- Roster import -----------------------------------------------------
