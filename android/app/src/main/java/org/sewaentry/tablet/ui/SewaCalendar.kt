@@ -3,6 +3,8 @@ package org.sewaentry.tablet.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -137,9 +140,9 @@ private fun MonthPickerDialog(
         Card(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = Surface),
-            modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 420.dp),
+            modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 420.dp).heightIn(max = 760.dp),
         ) {
-            Column(Modifier.padding(18.dp)) {
+            Column(Modifier.padding(18.dp).verticalScroll(rememberScrollState())) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { month = month.minusMonths(1) }) {
                         Icon(Icons.Filled.ChevronLeft, "Previous month", tint = Navy)

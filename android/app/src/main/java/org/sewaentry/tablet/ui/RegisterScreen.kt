@@ -461,74 +461,90 @@ private fun ActionBar(
     val arrived = sewadar.arrivalAt != null
     val departed = sewadar.departureAt != null
 
+    val nameBlock: @Composable () -> Unit = {
+        Column(if (compact) Modifier else Modifier.padding(end = 20.dp)) {
+            Text(sewadar.name, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Ink)
+            Text(
+                when {
+                    departed -> "Complete"
+                    arrived -> "Signed in at ${SewaDays.formatTime(sewadar.arrivalAt)}"
+                    else -> "Not yet arrived"
+                },
+                fontSize = 14.sp,
+                color = InkMuted,
+            )
+        }
+    }
+
+    val controls: @Composable () -> Unit = {
+        ManualButton(onClick = onManual, compact = compact)
+
+        if (allowLiveCapture) {
+            Spacer(Modifier.width(12.dp))
+
+            if (!arrived) {
+                LiveButton(
+                    label = "Arrival",
+                    icon = Icons.Filled.Login,
+                    accent = ArrivalGreen,
+                    onClick = onArrival,
+                    compact = compact,
+                )
+            } else {
+                FilledChipButton("Arrived ${SewaDays.formatTime(sewadar.arrivalAt)}", ArrivalGreen, compact)
+                Spacer(Modifier.width(12.dp))
+                if (!departed) {
+                    LiveButton(
+                        label = "Departure",
+                        icon = Icons.Filled.Logout,
+                        accent = DepartureRed,
+                        onClick = onDeparture,
+                        compact = compact,
+                    )
+                } else {
+                    FilledChipButton("Left ${SewaDays.formatTime(sewadar.departureAt)}", DepartureRed, compact)
+                }
+            }
+        } else {
+            // Past day: show what is on record, with no way to capture live.
+            Spacer(Modifier.width(12.dp))
+            RecordedChip(
+                text = if (arrived) "In ${SewaDays.formatTime(sewadar.arrivalAt)}" else "No arrival",
+                accent = if (arrived) ArrivalGreen else InkMuted,
+                compact = compact,
+            )
+            Spacer(Modifier.width(12.dp))
+            RecordedChip(
+                text = if (departed) "Out ${SewaDays.formatTime(sewadar.departureAt)}" else "No departure",
+                accent = if (departed) DepartureRed else InkMuted,
+                compact = compact,
+            )
+        }
+    }
+
     Card(
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = Surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
         modifier = modifier,
     ) {
-        Row(
-            Modifier
-                .padding(18.dp)
-                // A safety net on a narrow phone: if the name plus every chip
-                // still will not fit, the row scrolls instead of clipping
-                // controls off the edge of the screen.
-                .let { if (compact) it.horizontalScroll(rememberScrollState()) else it },
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.padding(end = 20.dp)) {
-                Text(sewadar.name, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Ink)
-                Text(
-                    when {
-                        departed -> "Complete"
-                        arrived -> "Signed in at ${SewaDays.formatTime(sewadar.arrivalAt)}"
-                        else -> "Not yet arrived"
-                    },
-                    fontSize = 14.sp,
-                    color = InkMuted,
-                )
+        if (compact) {
+            // Splitting the name onto its own line, above the buttons, frees
+            // the whole card width for the controls — the thing most likely
+            // to otherwise run out of room on a phone. A horizontal scroll
+            // stays as a last-resort fallback, never the primary path.
+            Column(Modifier.padding(14.dp)) {
+                nameBlock()
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) { controls() }
             }
-
-            ManualButton(onClick = onManual, compact = compact)
-
-            if (allowLiveCapture) {
-                Spacer(Modifier.width(12.dp))
-
-                if (!arrived) {
-                    LiveButton(
-                        label = "Arrival",
-                        icon = Icons.Filled.Login,
-                        accent = ArrivalGreen,
-                        onClick = onArrival,
-                        compact = compact,
-                    )
-                } else {
-                    FilledChipButton("Arrived ${SewaDays.formatTime(sewadar.arrivalAt)}", ArrivalGreen)
-                    Spacer(Modifier.width(12.dp))
-                    if (!departed) {
-                        LiveButton(
-                            label = "Departure",
-                            icon = Icons.Filled.Logout,
-                            accent = DepartureRed,
-                            onClick = onDeparture,
-                            compact = compact,
-                        )
-                    } else {
-                        FilledChipButton("Left ${SewaDays.formatTime(sewadar.departureAt)}", DepartureRed)
-                    }
-                }
-            } else {
-                // Past day: show what is on record, with no way to capture live.
-                Spacer(Modifier.width(12.dp))
-                RecordedChip(
-                    text = if (arrived) "In ${SewaDays.formatTime(sewadar.arrivalAt)}" else "No arrival",
-                    accent = if (arrived) ArrivalGreen else InkMuted,
-                )
-                Spacer(Modifier.width(12.dp))
-                RecordedChip(
-                    text = if (departed) "Out ${SewaDays.formatTime(sewadar.departureAt)}" else "No departure",
-                    accent = if (departed) DepartureRed else InkMuted,
-                )
+        } else {
+            Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                nameBlock()
+                controls()
             }
         }
     }
@@ -588,33 +604,47 @@ private fun LiveButton(
 }
 
 @Composable
-private fun FilledChipButton(label: String, color: Color) {
+private fun FilledChipButton(label: String, color: Color, compact: Boolean = false) {
     Box(
         Modifier
-            .height(ACTION_BUTTON_HEIGHT)
+            .height(if (compact) COMPACT_ACTION_BUTTON_HEIGHT else ACTION_BUTTON_HEIGHT)
             .background(color, RoundedCornerShape(16.dp))
-            .padding(horizontal = 24.dp),
+            .padding(horizontal = if (compact) 16.dp else 24.dp),
         contentAlignment = Alignment.Center,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White)
-            Spacer(Modifier.width(10.dp))
-            Text(label, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Icon(Icons.Filled.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(if (compact) 18.dp else 24.dp))
+            Spacer(Modifier.width(if (compact) 6.dp else 10.dp))
+            Text(
+                label,
+                color = Color.White,
+                fontSize = if (compact) 14.sp else 18.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                softWrap = false,
+            )
         }
     }
 }
 
 @Composable
-private fun RecordedChip(text: String, accent: Color) {
+private fun RecordedChip(text: String, accent: Color, compact: Boolean = false) {
     Box(
         Modifier
-            .height(ACTION_BUTTON_HEIGHT)
+            .height(if (compact) COMPACT_ACTION_BUTTON_HEIGHT else ACTION_BUTTON_HEIGHT)
             .background(SurfaceAlt, RoundedCornerShape(16.dp))
             .border(2.dp, Line, RoundedCornerShape(16.dp))
-            .padding(horizontal = 22.dp),
+            .padding(horizontal = if (compact) 14.dp else 22.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = accent, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+        Text(
+            text,
+            color = accent,
+            fontSize = if (compact) 14.sp else 17.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+        )
     }
 }
 

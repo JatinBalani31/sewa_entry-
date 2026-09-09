@@ -3,6 +3,8 @@ package org.sewaentry.tablet.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -101,9 +104,9 @@ fun ManualTimeDialog(
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = Surface),
-            modifier = Modifier.fillMaxWidth(0.94f).widthIn(max = 620.dp),
+            modifier = Modifier.fillMaxWidth(0.94f).widthIn(max = 620.dp).heightIn(max = 800.dp),
         ) {
-            Column(Modifier.padding(28.dp)) {
+            Column(Modifier.padding(28.dp).verticalScroll(rememberScrollState())) {
                 Text(sewadar.name, fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Ink)
                 Text(
                     "Manual entry for ${SewaDays.format(date)}" +

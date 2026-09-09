@@ -137,31 +137,25 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
 
         Spacer(Modifier.height(10.dp))
 
-        // On a phone there is no room for three buttons beside the title, so
-        // they sit on their own row, scrolling sideways if they still do not
-        // all fit rather than being pushed off the edge of the screen.
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = if (compact) Modifier.horizontalScroll(rememberScrollState()) else Modifier,
-        ) {
+        val restoreButton: @Composable (Modifier) -> Unit = { mod ->
             OutlinedButton(
                 onClick = { restoreLauncher.launch(arrayOf("*/*")) },
                 enabled = !backupBusy,
                 shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.height(52.dp),
+                modifier = mod.height(52.dp),
             ) {
                 Icon(Icons.Filled.CloudDownload, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Restore", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                Text("Restore", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1)
             }
+        }
 
-            Spacer(Modifier.width(10.dp))
-
+        val backupButton: @Composable (Modifier) -> Unit = { mod ->
             OutlinedButton(
                 onClick = { backupLauncher.launch(vm.backupFileName) },
                 enabled = !backupBusy,
                 shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.height(52.dp),
+                modifier = mod.height(52.dp),
             ) {
                 if (backupBusy) {
                     CircularProgressIndicator(color = Navy, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -169,24 +163,47 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
                     Icon(Icons.Filled.Backup, contentDescription = null, modifier = Modifier.size(20.dp))
                 }
                 Spacer(Modifier.width(8.dp))
-                Text("Backup", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                Text("Backup", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1)
             }
+        }
 
-            Spacer(Modifier.width(10.dp))
-
+        val importButton: @Composable (Modifier) -> Unit = { mod ->
             Button(
                 onClick = { picker.launch(arrayOf("*/*")) },
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Navy),
-                modifier = Modifier.height(52.dp).let { if (compact) it else it.width(240.dp) },
+                modifier = mod.height(52.dp),
             ) {
                 Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    if (compact) "Import" else "Import from Excel",
+                    "Import from Excel",
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
+                    maxLines = 1,
                 )
+            }
+        }
+
+        if (compact) {
+            // A phone has no room for three buttons on one line, and relying
+            // on a sideways scroll to find "Import" turned out to hide it
+            // entirely on some screens. Two full-width rows always fit.
+            Column {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    restoreButton(Modifier.weight(1f))
+                    backupButton(Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(10.dp))
+                importButton(Modifier.fillMaxWidth())
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                restoreButton(Modifier)
+                Spacer(Modifier.width(10.dp))
+                backupButton(Modifier)
+                Spacer(Modifier.width(10.dp))
+                importButton(Modifier.width(240.dp))
             }
         }
 

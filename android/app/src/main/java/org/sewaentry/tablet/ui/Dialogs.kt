@@ -1,11 +1,14 @@
 package org.sewaentry.tablet.ui
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
@@ -47,9 +50,9 @@ fun AddSewadarDialog(
         Card(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = Surface),
-            modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 460.dp),
+            modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 460.dp).heightIn(max = 700.dp),
         ) {
-            Column(Modifier.padding(22.dp)) {
+            Column(Modifier.padding(22.dp).verticalScroll(rememberScrollState())) {
                 Text("Add sewadar", fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Ink)
                 Text("They will join $departmentName.", fontSize = 14.sp, color = InkMuted)
                 Spacer(Modifier.height(16.dp))

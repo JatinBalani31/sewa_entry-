@@ -1,7 +1,10 @@
 package org.sewaentry.tablet.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -114,10 +117,15 @@ fun AdminGate(
         Card(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = Surface),
-            modifier = Modifier.fillMaxWidth(0.94f).widthIn(max = 460.dp),
+            modifier = Modifier.fillMaxWidth(0.94f).widthIn(max = 460.dp).heightIn(max = 720.dp),
         ) {
             Column(
-                Modifier.padding(if (compact) 20.dp else 32.dp),
+                Modifier
+                    .padding(if (compact) 20.dp else 32.dp)
+                    // A short screen (a phone in landscape, or a small window)
+                    // can be shorter than the keypad; scrolling beats clipping
+                    // off the bottom rows of keys.
+                    .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Icon(
