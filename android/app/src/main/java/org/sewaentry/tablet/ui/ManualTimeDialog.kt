@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -48,6 +49,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import org.sewaentry.tablet.data.SewaDays
 import org.sewaentry.tablet.data.SewadarWithStatus
 import java.time.LocalDate
@@ -92,11 +94,14 @@ fun ManualTimeDialog(
     val arrivalMissing = !editingArrival && sewadar.arrivalAt == null
     val canSave = !arrivalMissing
 
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = Surface),
-            modifier = Modifier.width(620.dp),
+            modifier = Modifier.fillMaxWidth(0.94f).widthIn(max = 620.dp),
         ) {
             Column(Modifier.padding(28.dp)) {
                 Text(sewadar.name, fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Ink)

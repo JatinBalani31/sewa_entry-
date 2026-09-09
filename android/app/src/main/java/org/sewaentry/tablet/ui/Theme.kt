@@ -6,6 +6,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 
 // The same navy the web console uses, so the tablet and the admin console
 // read as one system.
@@ -58,3 +59,14 @@ fun SewaTheme(
         content = content,
     )
 }
+
+/**
+ * True on a phone-width screen (portrait phones, small tablets in portrait).
+ * The app was built for a 10" tablet in landscape, but the same screens now
+ * also open on a phone — this is the single check every screen uses to trade
+ * fixed tablet-sized dimensions for ones that fit a narrow viewport.
+ */
+private const val COMPACT_WIDTH_DP = 600
+
+@Composable
+fun isCompactWidth(): Boolean = LocalConfiguration.current.screenWidthDp < COMPACT_WIDTH_DP

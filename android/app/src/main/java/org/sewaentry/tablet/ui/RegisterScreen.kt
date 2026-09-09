@@ -4,6 +4,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,6 +63,12 @@ private sealed interface Capture {
 private val ACTION_BUTTON_HEIGHT = 76.dp
 private val ACTION_BUTTON_WIDTH = 210.dp
 
+// A phone screen has nowhere near 210dp x 3 to spare, so the same buttons
+// shrink rather than push each other off the edge. Wide enough that "Manual"
+// and "Arrival" each stay on one line rather than wrapping mid-word.
+private val COMPACT_ACTION_BUTTON_HEIGHT = 60.dp
+private val COMPACT_ACTION_BUTTON_WIDTH = 156.dp
+
 @Composable
 fun RegisterScreen(vm: RegisterViewModel) {
     val date by vm.date.collectAsState()
@@ -86,36 +94,71 @@ fun RegisterScreen(vm: RegisterViewModel) {
 
             Spacer(Modifier.height(12.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                DepartmentDropdown(
-                    departments = departments.map { it.id to it.name },
-                    selectedId = departmentId,
-                    onSelect = vm::selectDepartment,
-                    modifier = Modifier.width(340.dp),
-                )
+            val present = roster.count { it.arrivalAt != null }
+            val complete = roster.count { it.departureAt != null }
+            val compact = isCompactWidth()
 
-                Spacer(Modifier.width(12.dp))
-
-                val present = roster.count { it.arrivalAt != null }
-                val complete = roster.count { it.departureAt != null }
-                Summary(present = present, complete = complete, total = roster.size)
-
-                if (!isToday) {
-                    Spacer(Modifier.width(12.dp))
-                    Pill("Past day - manual entry only", AmberBg, Amber)
+            if (compact) {
+                // A phone has no room for the dropdown, the summary pills and
+                // "Add sewadar" on one line, so the row splits into two.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DepartmentDropdown(
+                        departments = departments.map { it.id to it.name },
+                        selectedId = departmentId,
+                        onSelect = vm::selectDepartment,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedButton(
+                        onClick = { addingSewadar = true },
+                        enabled = departmentId != null,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.height(52.dp),
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(20.dp))
+                    }
                 }
-
-                Spacer(Modifier.weight(1f))
-
-                OutlinedButton(
-                    onClick = { addingSewadar = true },
-                    enabled = departmentId != null,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.height(58.dp),
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
                 ) {
-                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Add sewadar", fontSize = 16.sp)
+                    Summary(present = present, complete = complete, total = roster.size)
+                    if (!isToday) {
+                        Spacer(Modifier.width(12.dp))
+                        Pill("Past day - manual entry only", AmberBg, Amber)
+                    }
+                }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    DepartmentDropdown(
+                        departments = departments.map { it.id to it.name },
+                        selectedId = departmentId,
+                        onSelect = vm::selectDepartment,
+                        modifier = Modifier.width(340.dp),
+                    )
+
+                    Spacer(Modifier.width(12.dp))
+
+                    Summary(present = present, complete = complete, total = roster.size)
+
+                    if (!isToday) {
+                        Spacer(Modifier.width(12.dp))
+                        Pill("Past day - manual entry only", AmberBg, Amber)
+                    }
+
+                    Spacer(Modifier.weight(1f))
+
+                    OutlinedButton(
+                        onClick = { addingSewadar = true },
+                        enabled = departmentId != null,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.height(58.dp),
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Add sewadar", fontSize = 16.sp)
+                    }
                 }
             }
 
@@ -146,15 +189,20 @@ fun RegisterScreen(vm: RegisterViewModel) {
         }
 
         selected?.let { sewadar ->
+            val compact = isCompactWidth()
             ActionBar(
                 sewadar = sewadar,
                 // On a past day the device clock is meaningless, so the live
                 // buttons are withheld entirely and Manual is the only way in.
                 allowLiveCapture = isToday,
+                compact = compact,
                 onArrival = { capture = Capture.Arrival(sewadar) },
                 onDeparture = { capture = Capture.Departure(sewadar) },
                 onManual = { manualFor = sewadar },
-                modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(if (compact) 12.dp else 20.dp)
+                    .let { if (compact) it.fillMaxWidth() else it },
             )
         }
     }
@@ -408,6 +456,7 @@ private fun ActionBar(
     onDeparture: () -> Unit,
     onManual: () -> Unit,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     val arrived = sewadar.arrivalAt != null
     val departed = sewadar.departureAt != null
@@ -418,7 +467,15 @@ private fun ActionBar(
         elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
         modifier = modifier,
     ) {
-        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier
+                .padding(18.dp)
+                // A safety net on a narrow phone: if the name plus every chip
+                // still will not fit, the row scrolls instead of clipping
+                // controls off the edge of the screen.
+                .let { if (compact) it.horizontalScroll(rememberScrollState()) else it },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Column(Modifier.padding(end = 20.dp)) {
                 Text(sewadar.name, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Ink)
                 Text(
@@ -432,7 +489,7 @@ private fun ActionBar(
                 )
             }
 
-            ManualButton(onClick = onManual)
+            ManualButton(onClick = onManual, compact = compact)
 
             if (allowLiveCapture) {
                 Spacer(Modifier.width(12.dp))
@@ -443,6 +500,7 @@ private fun ActionBar(
                         icon = Icons.Filled.Login,
                         accent = ArrivalGreen,
                         onClick = onArrival,
+                        compact = compact,
                     )
                 } else {
                     FilledChipButton("Arrived ${SewaDays.formatTime(sewadar.arrivalAt)}", ArrivalGreen)
@@ -453,6 +511,7 @@ private fun ActionBar(
                             icon = Icons.Filled.Logout,
                             accent = DepartureRed,
                             onClick = onDeparture,
+                            compact = compact,
                         )
                     } else {
                         FilledChipButton("Left ${SewaDays.formatTime(sewadar.departureAt)}", DepartureRed)
@@ -477,17 +536,25 @@ private fun ActionBar(
 
 /** Grey, and the same size as Arrival so the bar reads as one row of controls. */
 @Composable
-private fun ManualButton(onClick: () -> Unit) {
+private fun ManualButton(onClick: () -> Unit, compact: Boolean = false) {
     OutlinedButton(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.height(ACTION_BUTTON_HEIGHT).width(ACTION_BUTTON_WIDTH),
+        modifier = Modifier
+            .height(if (compact) COMPACT_ACTION_BUTTON_HEIGHT else ACTION_BUTTON_HEIGHT)
+            .width(if (compact) COMPACT_ACTION_BUTTON_WIDTH else ACTION_BUTTON_WIDTH),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = InkMuted),
         border = BorderStroke(2.dp, Line),
     ) {
         Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(24.dp))
         Spacer(Modifier.width(10.dp))
-        Text("Manual", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "Manual",
+            fontSize = if (compact) 16.sp else 20.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+        )
     }
 }
 
@@ -497,17 +564,26 @@ private fun LiveButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     accent: Color,
     onClick: () -> Unit,
+    compact: Boolean = false,
 ) {
     OutlinedButton(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.height(ACTION_BUTTON_HEIGHT).width(ACTION_BUTTON_WIDTH),
+        modifier = Modifier
+            .height(if (compact) COMPACT_ACTION_BUTTON_HEIGHT else ACTION_BUTTON_HEIGHT)
+            .width(if (compact) COMPACT_ACTION_BUTTON_WIDTH else ACTION_BUTTON_WIDTH),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = accent),
         border = BorderStroke(3.dp, accent),
     ) {
         Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp))
         Spacer(Modifier.width(10.dp))
-        Text(label, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Text(
+            label,
+            fontSize = if (compact) 16.sp else 20.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+        )
     }
 }
 

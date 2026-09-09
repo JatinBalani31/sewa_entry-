@@ -4,6 +4,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.sewaentry.tablet.roster.ParsedSheet
@@ -119,18 +122,28 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
         )
     }
 
+    val compact = isCompactWidth()
+
     Column(Modifier.fillMaxSize().background(Background).padding(16.dp)) {
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Roster", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Ink)
-                Text(
-                    "${departments.size} departments on this tablet",
-                    fontSize = 14.sp,
-                    color = InkMuted,
-                )
-            }
+        Column(Modifier.padding(bottom = 4.dp)) {
+            Text("Roster", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Ink)
+            Text(
+                "${departments.size} departments on this tablet",
+                fontSize = 14.sp,
+                color = InkMuted,
+            )
+        }
 
+        Spacer(Modifier.height(10.dp))
+
+        // On a phone there is no room for three buttons beside the title, so
+        // they sit on their own row, scrolling sideways if they still do not
+        // all fit rather than being pushed off the edge of the screen.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = if (compact) Modifier.horizontalScroll(rememberScrollState()) else Modifier,
+        ) {
             OutlinedButton(
                 onClick = { restoreLauncher.launch(arrayOf("*/*")) },
                 enabled = !backupBusy,
@@ -165,11 +178,15 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
                 onClick = { picker.launch(arrayOf("*/*")) },
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Navy),
-                modifier = Modifier.height(52.dp).width(240.dp),
+                modifier = Modifier.height(52.dp).let { if (compact) it else it.width(240.dp) },
             ) {
                 Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Import from Excel", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(
+                    if (compact) "Import" else "Import from Excel",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                )
             }
         }
 
@@ -328,6 +345,7 @@ private fun ImportPreview(vm: RegisterViewModel) {
     val state by vm.importState.collectAsState()
     val plan = state.plan ?: return
     val selection = state.selection
+    val compact = isCompactWidth()
 
     val departments = plan.departments(selection)
     val people = plan.sewadarCount(selection)
@@ -336,16 +354,36 @@ private fun ImportPreview(vm: RegisterViewModel) {
 
     Column(Modifier.fillMaxSize()) {
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            StatTile("Departments", departments.size.toString(), Modifier.weight(1f))
-            StatTile("Sewadars", people.toString(), Modifier.weight(1f))
-            StatTile("HODs found", hods.toString(), Modifier.weight(1f))
-            StatTile(
-                "Sheets skipped",
-                plan.skipped.size.toString(),
-                Modifier.weight(1f),
-                accent = if (plan.skipped.isNotEmpty()) Amber else null,
-            )
+        if (compact) {
+            // Four tiles on one line get unreadably narrow on a phone, so
+            // they wrap into a 2x2 grid instead.
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    StatTile("Departments", departments.size.toString(), Modifier.weight(1f))
+                    StatTile("Sewadars", people.toString(), Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    StatTile("HODs found", hods.toString(), Modifier.weight(1f))
+                    StatTile(
+                        "Sheets skipped",
+                        plan.skipped.size.toString(),
+                        Modifier.weight(1f),
+                        accent = if (plan.skipped.isNotEmpty()) Amber else null,
+                    )
+                }
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                StatTile("Departments", departments.size.toString(), Modifier.weight(1f))
+                StatTile("Sewadars", people.toString(), Modifier.weight(1f))
+                StatTile("HODs found", hods.toString(), Modifier.weight(1f))
+                StatTile(
+                    "Sheets skipped",
+                    plan.skipped.size.toString(),
+                    Modifier.weight(1f),
+                    accent = if (plan.skipped.isNotEmpty()) Amber else null,
+                )
+            }
         }
 
         Spacer(Modifier.height(12.dp))
@@ -391,9 +429,9 @@ private fun ImportPreview(vm: RegisterViewModel) {
 
         Spacer(Modifier.height(12.dp))
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        val archiveRow: @Composable () -> Unit = {
             Row(
-                Modifier.weight(1f).clickable { vm.setDeactivateMissing(!state.deactivateMissing) },
+                Modifier.clickable { vm.setDeactivateMissing(!state.deactivateMissing) },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Checkbox(
@@ -415,7 +453,9 @@ private fun ImportPreview(vm: RegisterViewModel) {
                     )
                 }
             }
+        }
 
+        val actionButtons: @Composable () -> Unit = {
             OutlinedButton(
                 onClick = vm::clearImport,
                 shape = RoundedCornerShape(14.dp),
@@ -429,13 +469,35 @@ private fun ImportPreview(vm: RegisterViewModel) {
                 enabled = !state.applying && people > 0,
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = ArrivalGreen),
-                modifier = Modifier.height(58.dp).width(250.dp),
+                modifier = Modifier.height(58.dp).let { if (compact) it.weight(1f) else it.width(250.dp) },
             ) {
                 if (state.applying) {
                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp))
                 } else {
-                    Text("Import $people sewadars", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(
+                        "Import $people sewadars",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
+            }
+        }
+
+        if (compact) {
+            // A phone has no room for the checkbox, Cancel and Import all on
+            // one line — cramming them in was squeezing the checkbox's own
+            // label down to almost nothing. They stack instead.
+            Column {
+                archiveRow()
+                Spacer(Modifier.height(12.dp))
+                Row(Modifier.fillMaxWidth()) { actionButtons() }
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) { archiveRow() }
+                actionButtons()
             }
         }
     }

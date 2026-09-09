@@ -7,10 +7,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -32,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.sewaentry.tablet.data.AdminLock
@@ -100,14 +103,21 @@ fun AdminGate(
         if (next.length == AdminLock.LENGTH) submit(next)
     }
 
+    // A phone screen has far less width than the 10" tablet this was designed
+    // for, so the card and its keypad shrink to fit rather than clipping.
+    val compact = isCompactWidth()
+    val keyWidth = if (compact) 76.dp else 96.dp
+    val keyHeight = if (compact) 56.dp else 68.dp
+    val keySpacing = if (compact) 8.dp else 12.dp
+
     Box(Modifier.fillMaxSize().background(Background), contentAlignment = Alignment.Center) {
         Card(
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = Surface),
-            modifier = Modifier.width(460.dp),
+            modifier = Modifier.fillMaxWidth(0.94f).widthIn(max = 460.dp),
         ) {
             Column(
-                Modifier.padding(32.dp),
+                Modifier.padding(if (compact) 20.dp else 32.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Icon(
@@ -123,7 +133,8 @@ fun AdminGate(
                     subtitle,
                     fontSize = 14.sp,
                     color = InkMuted,
-                    modifier = Modifier.width(340.dp),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.widthIn(max = 340.dp),
                 )
 
                 Spacer(Modifier.height(22.dp))
@@ -151,19 +162,21 @@ fun AdminGate(
 
                 // 1-9, then blank / 0 / backspace.
                 listOf("123", "456", "789").forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        row.forEach { digit -> Key(digit.toString()) { press(digit.toString()) } }
+                    Row(horizontalArrangement = Arrangement.spacedBy(keySpacing)) {
+                        row.forEach { digit ->
+                            Key(digit.toString(), keyWidth, keyHeight) { press(digit.toString()) }
+                        }
                     }
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(keySpacing))
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Spacer(Modifier.width(96.dp))
-                    Key("0") { press("0") }
+                Row(horizontalArrangement = Arrangement.spacedBy(keySpacing)) {
+                    Spacer(Modifier.width(keyWidth))
+                    Key("0", keyWidth, keyHeight) { press("0") }
                     Button(
                         onClick = { entry = entry.dropLast(1); error = null },
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = SurfaceAlt, contentColor = Navy),
-                        modifier = Modifier.size(96.dp, 68.dp),
+                        modifier = Modifier.size(keyWidth, keyHeight),
                     ) {
                         Icon(Icons.AutoMirrored.Filled.Backspace, contentDescription = "Delete", modifier = Modifier.size(24.dp))
                     }
@@ -174,12 +187,12 @@ fun AdminGate(
 }
 
 @Composable
-private fun Key(label: String, onClick: () -> Unit) {
+private fun Key(label: String, width: androidx.compose.ui.unit.Dp, height: androidx.compose.ui.unit.Dp, onClick: () -> Unit) {
     Button(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
         colors = ButtonDefaults.buttonColors(containerColor = SurfaceAlt, contentColor = Ink),
-        modifier = Modifier.size(96.dp, 68.dp),
+        modifier = Modifier.size(width, height),
     ) {
         Text(label, fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color.Unspecified)
     }
