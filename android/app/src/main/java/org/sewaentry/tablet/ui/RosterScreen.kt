@@ -371,73 +371,86 @@ private fun ImportPreview(vm: RegisterViewModel) {
 
     Column(Modifier.fillMaxSize()) {
 
-        if (compact) {
-            // Four tiles on one line get unreadably narrow on a phone, so
-            // they wrap into a 2x2 grid instead.
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                    StatTile("Departments", departments.size.toString(), Modifier.weight(1f))
-                    StatTile("Sewadars", people.toString(), Modifier.weight(1f))
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                    StatTile("HODs found", hods.toString(), Modifier.weight(1f))
-                    StatTile(
-                        "Sheets skipped",
-                        plan.skipped.size.toString(),
-                        Modifier.weight(1f),
-                        accent = if (plan.skipped.isNotEmpty()) Amber else null,
-                    )
-                }
-            }
-        } else {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                StatTile("Departments", departments.size.toString(), Modifier.weight(1f))
-                StatTile("Sewadars", people.toString(), Modifier.weight(1f))
-                StatTile("HODs found", hods.toString(), Modifier.weight(1f))
-                StatTile(
-                    "Sheets skipped",
-                    plan.skipped.size.toString(),
-                    Modifier.weight(1f),
-                    accent = if (plan.skipped.isNotEmpty()) Amber else null,
-                )
-            }
-        }
+        // Everything above the action bar scrolls as one list. The tiles and
+        // the notices used to sit outside the scroll, and with a real workbook
+        // — forty-odd sheets, a "no bold name in ..." line naming a dozen
+        // departments — they filled the screen on their own and pushed the
+        // Import button off the bottom, where nobody could reach it.
+        LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
 
-        Spacer(Modifier.height(12.dp))
-
-        if (plan.conflicts.isNotEmpty()) {
-            Notice(
-                "${plan.conflicts.size} sheet(s) name a department that another sheet already covers. " +
-                    "They are left out — tick one only if it really is part of that department.",
-            )
-            Spacer(Modifier.height(10.dp))
-        }
-        if (missingHod.isNotEmpty()) {
-            Notice("No bold name in: ${missingHod.joinToString()}. They import with no HOD marked.")
-            Spacer(Modifier.height(10.dp))
-        }
-
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = Surface),
-            modifier = Modifier.fillMaxWidth().weight(1f),
-        ) {
-            LazyColumn {
-                items(plan.sheets, key = { it.sheet }) { sheet ->
-                    SheetRow(
-                        sheet = sheet,
-                        checked = sheet.sheet in selection,
-                        onToggle = { vm.toggleImportSheet(sheet.sheet) },
-                    )
-                }
-                if (plan.skipped.isNotEmpty()) {
-                    items(plan.skipped, key = { "skip-${it.sheet}" }) { skipped ->
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-                            Text(
-                                "${skipped.sheet} - skipped, ${skipped.reason}",
-                                fontSize = 13.sp,
-                                color = InkMuted,
+            item {
+                if (compact) {
+                    // Four tiles on one line get unreadably narrow on a phone,
+                    // so they wrap into a 2x2 grid instead.
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                            StatTile("Departments", departments.size.toString(), Modifier.weight(1f))
+                            StatTile("Sewadars", people.toString(), Modifier.weight(1f))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                            StatTile("HODs found", hods.toString(), Modifier.weight(1f))
+                            StatTile(
+                                "Sheets skipped",
+                                plan.skipped.size.toString(),
+                                Modifier.weight(1f),
+                                accent = if (plan.skipped.isNotEmpty()) Amber else null,
                             )
+                        }
+                    }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                        StatTile("Departments", departments.size.toString(), Modifier.weight(1f))
+                        StatTile("Sewadars", people.toString(), Modifier.weight(1f))
+                        StatTile("HODs found", hods.toString(), Modifier.weight(1f))
+                        StatTile(
+                            "Sheets skipped",
+                            plan.skipped.size.toString(),
+                            Modifier.weight(1f),
+                            accent = if (plan.skipped.isNotEmpty()) Amber else null,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+
+            if (plan.conflicts.isNotEmpty()) {
+                item {
+                    Notice(
+                        "${plan.conflicts.size} sheet(s) name a department that another sheet already covers. " +
+                            "They are left out — tick one only if it really is part of that department.",
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
+            if (missingHod.isNotEmpty()) {
+                item {
+                    Notice("No bold name in: ${missingHod.joinToString()}. They import with no HOD marked.")
+                    Spacer(Modifier.height(10.dp))
+                }
+            }
+
+            item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Surface),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column {
+                        plan.sheets.forEach { sheet ->
+                            SheetRow(
+                                sheet = sheet,
+                                checked = sheet.sheet in selection,
+                                onToggle = { vm.toggleImportSheet(sheet.sheet) },
+                            )
+                        }
+                        plan.skipped.forEach { skipped ->
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                                Text(
+                                    "${skipped.sheet} - skipped, ${skipped.reason}",
+                                    fontSize = 13.sp,
+                                    color = InkMuted,
+                                )
+                            }
                         }
                     }
                 }

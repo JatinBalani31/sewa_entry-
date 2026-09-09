@@ -72,86 +72,128 @@ fun StatsScreen(vm: RegisterViewModel) {
     val reportDept by vm.reportDepartmentId.collectAsState()
     val periodLabel by vm.periodLabel.collectAsState()
 
+    val compact = isCompactWidth()
+
     Column(Modifier.fillMaxSize().background(Background).padding(16.dp)) {
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "Quarterly summary - ${quarter.label}",
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Ink,
-                )
-                Text(
-                    "${quarter.monthsLabel} - ${state.sewaDates.size} sewa days recorded" +
-                        if (dayFilter != org.sewaentry.tablet.data.DayFilter.ALL) " - ${dayFilter.label}" else "",
-                    fontSize = 14.sp,
-                    color = InkMuted,
-                )
-            }
+        val title: @Composable () -> Unit = {
+            Text(
+                "Quarterly summary - ${quarter.label}",
+                fontSize = if (compact) 22.sp else 26.sp,
+                fontWeight = FontWeight.Bold,
+                color = Ink,
+            )
+            Text(
+                "${quarter.monthsLabel} - ${state.sewaDates.size} sewa days recorded" +
+                    if (dayFilter != org.sewaentry.tablet.data.DayFilter.ALL) " - ${dayFilter.label}" else "",
+                fontSize = 14.sp,
+                color = InkMuted,
+            )
+        }
 
+        val exportButton: @Composable (Modifier) -> Unit = { mod ->
             Button(
                 onClick = { vm.exportExcel() },
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Navy),
-                modifier = Modifier.height(62.dp).width(230.dp),
+                modifier = mod.height(if (compact) 52.dp else 62.dp),
             ) {
                 Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(10.dp))
-                Text("Export Excel", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text(
+                    "Export Excel",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = if (compact) 16.sp else 18.sp,
+                    maxLines = 1,
+                )
+            }
+        }
+
+        if (compact) {
+            Column { title() }
+            Spacer(Modifier.height(10.dp))
+            exportButton(Modifier.fillMaxWidth())
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) { title() }
+                exportButton(Modifier.width(230.dp))
             }
         }
 
         Spacer(Modifier.height(14.dp))
 
         // --- Filters ---------------------------------------------------------
-        // Four dropdowns on one line rather than five rows of chips: the
-        // summary itself is what the screen is for, so the controls give the
-        // table back its room.
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        // Four dropdowns rather than five rows of chips: the summary itself is
+        // what the screen is for, so the controls give the table back its room.
+        // On a phone four across leaves each about eighty points wide — too
+        // narrow to read the selected value — so they go two by two.
+        val periodFilter: @Composable (Modifier) -> Unit = { mod ->
             FilterDropdown(
                 label = "Period",
                 value = periodLabel,
-                modifier = Modifier.weight(1.2f),
+                modifier = mod,
                 options = periodOptions(),
                 isSelected = { it.label == periodLabel },
                 onSelect = { option -> option.apply(vm) },
                 render = { it.label },
             )
-
+        }
+        val dayFilterDropdown: @Composable (Modifier) -> Unit = { mod ->
             FilterDropdown(
                 label = "Sewa days",
                 value = dayFilter.label,
-                modifier = Modifier.weight(1f),
+                modifier = mod,
                 options = DayFilter.entries.toList(),
                 isSelected = { it == dayFilter },
                 onSelect = vm::setDayFilter,
                 render = { it.label },
             )
-
+        }
+        val groupByFilter: @Composable (Modifier) -> Unit = { mod ->
             FilterDropdown(
                 label = "Group by",
                 value = period.label,
-                modifier = Modifier.weight(1f),
+                modifier = mod,
                 options = ReportPeriod.entries.toList(),
                 isSelected = { it == period },
                 onSelect = vm::setPeriod,
                 render = { it.label },
             )
-
+        }
+        val departmentFilter: @Composable (Modifier) -> Unit = { mod ->
             FilterDropdown(
                 label = "Department",
                 value = departments.firstOrNull { it.id == reportDept }?.name ?: "All departments",
-                modifier = Modifier.weight(1.3f),
+                modifier = mod,
                 options = listOf<Long?>(null) + departments.map { it.id },
                 isSelected = { it == reportDept },
                 onSelect = vm::setReportDepartment,
                 render = { id -> departments.firstOrNull { it.id == id }?.name ?: "All departments" },
             )
+        }
+
+        if (compact) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    periodFilter(Modifier.weight(1f))
+                    dayFilterDropdown(Modifier.weight(1f))
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    groupByFilter(Modifier.weight(1f))
+                    departmentFilter(Modifier.weight(1f))
+                }
+            }
+        } else {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                periodFilter(Modifier.weight(1.2f))
+                dayFilterDropdown(Modifier.weight(1f))
+                groupByFilter(Modifier.weight(1f))
+                departmentFilter(Modifier.weight(1.3f))
+            }
         }
 
         Spacer(Modifier.height(14.dp))
@@ -160,16 +202,36 @@ fun StatsScreen(vm: RegisterViewModel) {
         val attended = state.totals.count { it.daysAttended > 0 }
         val open = state.totals.sumOf { it.openDays }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            StatTile("Sewadars with hours", attended.toString(), Modifier.weight(1f))
-            StatTile("Total hours", String.format("%.1f", totalHours), Modifier.weight(1f))
-            StatTile("Sewa days counted", state.rows.map { it.sewaDate }.distinct().size.toString(), Modifier.weight(1f))
-            StatTile(
-                "Days without sign-out",
-                open.toString(),
-                Modifier.weight(1f),
-                accent = if (open > 0) Amber else null,
-            )
+        val sewaDaysCounted = state.rows.map { it.sewaDate }.distinct().size.toString()
+
+        if (compact) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    StatTile("Sewadars with hours", attended.toString(), Modifier.weight(1f))
+                    StatTile("Total hours", String.format("%.1f", totalHours), Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                    StatTile("Sewa days counted", sewaDaysCounted, Modifier.weight(1f))
+                    StatTile(
+                        "Days without sign-out",
+                        open.toString(),
+                        Modifier.weight(1f),
+                        accent = if (open > 0) Amber else null,
+                    )
+                }
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                StatTile("Sewadars with hours", attended.toString(), Modifier.weight(1f))
+                StatTile("Total hours", String.format("%.1f", totalHours), Modifier.weight(1f))
+                StatTile("Sewa days counted", sewaDaysCounted, Modifier.weight(1f))
+                StatTile(
+                    "Days without sign-out",
+                    open.toString(),
+                    Modifier.weight(1f),
+                    accent = if (open > 0) Amber else null,
+                )
+            }
         }
 
         Spacer(Modifier.height(14.dp))
@@ -326,21 +388,43 @@ private fun periodOptions(): List<PeriodOption> {
 }
 @Composable
 internal fun StatTile(label: String, value: String, modifier: Modifier = Modifier, accent: Color? = null) {
+    val compact = isCompactWidth()
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Surface),
         modifier = modifier,
     ) {
-        Column(Modifier.padding(18.dp)) {
-            Text(label.uppercase(), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = InkMuted)
-            Spacer(Modifier.height(6.dp))
-            Text(value, fontSize = 30.sp, fontWeight = FontWeight.Bold, color = accent ?: Ink)
+        Column(Modifier.padding(if (compact) 12.dp else 18.dp)) {
+            Text(
+                label.uppercase(),
+                fontSize = if (compact) 10.sp else 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = InkMuted,
+            )
+            Spacer(Modifier.height(if (compact) 4.dp else 6.dp))
+            Text(
+                value,
+                fontSize = if (compact) 24.sp else 30.sp,
+                fontWeight = FontWeight.Bold,
+                color = accent ?: Ink,
+            )
         }
     }
 }
 
 @Composable
 private fun TotalsHeader() {
+    // Seven columns need a tablet. On a phone each one gets about fifty
+    // points and the headings wrap mid-word, so the table becomes a list:
+    // who, and the hours, with the rest as a line of detail underneath.
+    if (isCompactWidth()) {
+        Row(Modifier.fillMaxWidth().background(SurfaceAlt).padding(horizontal = 16.dp, vertical = 12.dp)) {
+            HeaderCell("Sewadar", Modifier.weight(1f))
+            HeaderCell("Hours", Modifier)
+        }
+        return
+    }
+
     Row(Modifier.fillMaxWidth().background(SurfaceAlt).padding(horizontal = 18.dp, vertical = 14.dp)) {
         HeaderCell("Sewadar", Modifier.weight(2.2f))
         HeaderCell("Department", Modifier.weight(1.4f))
@@ -368,6 +452,39 @@ private fun DepartmentHeading(name: String) {
 
 @Composable
 private fun DepartmentSubtotal(group: DepartmentGroup) {
+    if (isCompactWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(SurfaceAlt)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "${group.departmentName} total",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                )
+                Text(
+                    "${group.activeCount} active - ${group.daysAttended} " +
+                        if (group.daysAttended == 1) "day" else "days",
+                    fontSize = 12.sp,
+                    color = InkMuted,
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(
+                String.format("%.1f", group.hours),
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+                color = Navy,
+            )
+        }
+        return
+    }
+
     Row(
         Modifier
             .fillMaxWidth()
@@ -404,6 +521,31 @@ private fun DepartmentSubtotal(group: DepartmentGroup) {
 
 @Composable
 private fun GrandTotal(groups: List<DepartmentGroup>) {
+    if (isCompactWidth()) {
+        Row(
+            Modifier.fillMaxWidth().background(Navy).padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("GRAND TOTAL", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(
+                    "${groups.sumOf { it.activeCount }} sewadars - " +
+                        "${groups.sumOf { it.daysAttended }} days",
+                    fontSize = 12.sp,
+                    color = Color.White.copy(alpha = 0.75f),
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(
+                String.format("%.1f", groups.sumOf { it.hours }),
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+            )
+        }
+        return
+    }
+
     Row(
         Modifier.fillMaxWidth().background(Navy).padding(horizontal = 18.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -443,6 +585,46 @@ private fun GrandTotal(groups: List<DepartmentGroup>) {
 @Composable
 private fun TotalsRow(stat: SewadarTotals) {
     val average = if (stat.daysComplete > 0) stat.hours / stat.daysComplete else 0.0
+
+    if (isCompactWidth()) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(stat.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    buildString {
+                        append(stat.departmentName ?: "--")
+                        append(" - ${stat.daysAttended} ${if (stat.daysAttended == 1) "day" else "days"}")
+                        if (stat.daysComplete != stat.daysAttended) append(", ${stat.daysComplete} complete")
+                        if (average > 0) append(" - avg ${String.format("%.1f", average)}")
+                        stat.lastAttended?.let { append(" - last $it") }
+                    },
+                    fontSize = 12.sp,
+                    color = InkMuted,
+                )
+                if (stat.openDays > 0) {
+                    Spacer(Modifier.height(4.dp))
+                    Box(
+                        Modifier.background(AmberBg, RoundedCornerShape(999.dp))
+                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                    ) {
+                        Text("${stat.openDays} open", fontSize = 11.sp, color = Amber, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(
+                String.format("%.1f", stat.hours),
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = Ink,
+            )
+        }
+        return
+    }
 
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),

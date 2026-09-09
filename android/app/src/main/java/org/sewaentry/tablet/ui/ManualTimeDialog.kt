@@ -185,6 +185,20 @@ fun ManualTimeDialog(
 }
 
 /**
+ * Compose throws if focus is requested for a box that is no longer on screen,
+ * which is exactly what happens in the instant the dialog is being dismissed.
+ * A focus move that arrives too late is worth nothing; taking the app down
+ * with it costs the entry the admin just saved.
+ */
+private fun FocusRequester.requestFocusIfAttached() {
+    try {
+        requestFocus()
+    } catch (_: IllegalStateException) {
+        // The box has already left the composition.
+    }
+}
+
+/**
  * HH : MM, each a two-digit box with a stepper above and below.
  *
  * Typing two digits into the hour box moves focus to minutes automatically,
@@ -202,7 +216,7 @@ private fun TimeSpinner(
     val minuteFocus = remember { FocusRequester() }
     val hourFocus = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) { hourFocus.requestFocus() }
+    LaunchedEffect(Unit) { hourFocus.requestFocusIfAttached() }
 
     Row(
         Modifier.fillMaxWidth(),
@@ -216,7 +230,7 @@ private fun TimeSpinner(
             accent = accent,
             focusRequester = hourFocus,
             onValueChange = onHourChange,
-            onFilled = { minuteFocus.requestFocus() },
+            onFilled = { minuteFocus.requestFocusIfAttached() },
         )
 
         Text(
@@ -282,13 +296,19 @@ private fun DigitBox(
                 .border(3.dp, accent, RoundedCornerShape(18.dp))
                 // The whole box is the touch target, not just the glyphs — the
                 // text itself is a fraction of this area on a tablet.
-                .clickable { focusRequester.requestFocus() },
+                .clickable { focusRequester.requestFocusIfAttached() },
             contentAlignment = Alignment.Center,
         ) {
             BasicTextField(
                 value = field,
                 onValueChange = { input ->
                     val digits = input.text.filter(Char::isDigit)
+                    // Compose re-emits the current value when the field loses
+                    // its selection — which happens as the dialog is torn down
+                    // after Save. Only a real edit should move the caret on,
+                    // otherwise closing the dialog tries to focus a box that no
+                    // longer exists.
+                    val edited = input.text != field.text
                     when {
                         digits.isEmpty() -> {
                             midEdit = true
@@ -306,7 +326,7 @@ private fun DigitBox(
                             midEdit = false
                             field = TextFieldValue(two, TextRange(0, two.length))
                             onValueChange(two.toInt().coerceIn(0, max))
-                            onFilled()
+                            if (edited) onFilled()
                         }
                     }
                 },
