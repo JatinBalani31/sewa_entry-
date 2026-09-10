@@ -2,12 +2,11 @@ package org.sewaentry.tablet.data
 
 import java.time.DayOfWeek
 import java.time.LocalDate
-import java.time.temporal.WeekFields
 
 /**
  * Turning raw attendance rows into the hours reports the sangat actually asks
- * for: how long each individual did sewa, sliced by sewa day, week, month or
- * quarter.
+ * for: how long an individual sewadar, or one department, did sewa over a
+ * chosen period.
  *
  * Everything here is a pure function over a list of rows — no database, no
  * Android — so the arithmetic that ends up in someone's hours total can be
@@ -25,27 +24,6 @@ enum class DayFilter(val label: String) {
         WEDNESDAY -> date.dayOfWeek == DayOfWeek.WEDNESDAY
         SUNDAY -> date.dayOfWeek == DayOfWeek.SUNDAY
     }
-}
-
-enum class ReportPeriod(val label: String) {
-    OVERALL("Overall"),
-    WEEKLY("Weekly"),
-    MONTHLY("Monthly"),
-    QUARTERLY("Quarterly"),
-}
-
-/** One sewadar's totals within one period bucket. */
-data class PeriodTotals(
-    val sewadarId: Long,
-    val name: String,
-    val departmentName: String?,
-    val periodKey: String,
-    val periodLabel: String,
-    val daysAttended: Int,
-    val daysComplete: Int,
-    val minutes: Long,
-) {
-    val hours: Double get() = minutes / 60.0
 }
 
 /** A sewadar's total across the whole filtered range. */
@@ -76,53 +54,8 @@ object Reporting {
     fun filter(rows: List<ExportRow>, dayFilter: DayFilter): List<ExportRow> =
         rows.filter { it.arrivalAt != null && dayFilter.matches(SewaDays.parse(it.sewaDate)) }
 
-    /** "2026-Q3", "2026-W36", "2026-09", or a single bucket for OVERALL. */
-    fun periodKey(date: LocalDate, period: ReportPeriod): String = when (period) {
-        ReportPeriod.OVERALL -> "all"
-        ReportPeriod.WEEKLY -> {
-            // ISO weeks, so a week that straddles New Year keeps one identity
-            // rather than splitting across two years.
-            val fields = WeekFields.ISO
-            val week = date.get(fields.weekOfWeekBasedYear())
-            val year = date.get(fields.weekBasedYear())
-            "%d-W%02d".format(year, week)
-        }
-        ReportPeriod.MONTHLY -> "%d-%02d".format(date.year, date.monthValue)
-        ReportPeriod.QUARTERLY -> "%d-Q%d".format(date.year, (date.monthValue - 1) / 3 + 1)
-    }
-
-    fun periodLabel(key: String, period: ReportPeriod): String = when (period) {
-        ReportPeriod.OVERALL -> "Overall"
-        ReportPeriod.WEEKLY -> key.replace("-W", " week ")
-        ReportPeriod.MONTHLY -> {
-            val (year, month) = key.split("-")
-            val name = java.time.Month.of(month.toInt()).name.lowercase().replaceFirstChar { it.uppercase() }
-            "$name $year"
-        }
-        ReportPeriod.QUARTERLY -> key.replace("-", " ")
-    }
-
-    /** Every period bucket present in the data, oldest first. */
-    fun periodKeys(rows: List<ExportRow>, period: ReportPeriod): List<String> =
-        rows.map { periodKey(SewaDays.parse(it.sewaDate), period) }.distinct().sorted()
-
-    /** One row per sewadar per period bucket. */
-    fun byPeriod(rows: List<ExportRow>, period: ReportPeriod): List<PeriodTotals> =
-        rows.groupBy { it.sewadarId to periodKey(SewaDays.parse(it.sewaDate), period) }
-            .map { (key, group) ->
-                val first = group.first()
-                PeriodTotals(
-                    sewadarId = key.first,
-                    name = first.name,
-                    departmentName = first.departmentName,
-                    periodKey = key.second,
-                    periodLabel = periodLabel(key.second, period),
-                    daysAttended = group.size,
-                    daysComplete = group.count { it.departureAt != null },
-                    minutes = group.sumOf { minutesOf(it) },
-                )
-            }
-            .sortedWith(compareBy({ it.name }, { it.periodKey }))
+    /** "yyyy-MM" for a date - the column key inside a quarterly summary. */
+    fun monthKey(date: LocalDate): String = "%d-%02d".format(date.year, date.monthValue)
 
     /**
      * One row per sewadar across the whole range.
@@ -178,7 +111,8 @@ object Reporting {
      * a quarterly summary.
      */
     fun monthlyHours(rows: List<ExportRow>): Map<Pair<Long, String>, Double> =
-        byPeriod(rows, ReportPeriod.MONTHLY).associate { (it.sewadarId to it.periodKey) to it.hours }
+        rows.groupBy { it.sewadarId to monthKey(SewaDays.parse(it.sewaDate)) }
+            .mapValues { (_, group) -> group.sumOf { minutesOf(it) } / 60.0 }
 
     /** Distinct sewa dates present, so a summary can state how many days it covers. */
     fun sewaDatesIn(rows: List<ExportRow>): List<String> =

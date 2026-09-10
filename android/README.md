@@ -83,7 +83,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ./gradlew :app:testDebugUnitTest
 ```
 
-64 unit tests covering the sewa calendar, the hours arithmetic, quarter
+59 unit tests covering the sewa calendar, the hours arithmetic, quarter
 boundaries, department subtotals, the spreadsheet writer, the roster import
 parser, and the admin PIN validation. They run on the JVM — no device needed.
 
@@ -191,35 +191,38 @@ sewadar, and change or clear what is recorded.
 
 ---
 
-## The quarterly summary
+## The summary
 
-The **Summary** tab opens on the current quarter, because producing the
-quarterly summary is the job it exists for. Four compact dropdowns along the
-top control what is shown:
+A report is always **about one thing**: a single department, or a single
+sewadar, over a chosen period. A figure summed across every department in the
+sangat answers no question anybody asks, so the screen does not offer one.
+
+The **Summary** tab opens on the first department and the current quarter.
+Four compact dropdowns along the top say what the report is about:
 
 - **Period** — eight rolling quarters plus "This month", "Last 6 months",
   "Last 1 year" and "All time"
 - **Sewa days** — All / Wednesdays only / Sundays only
-- **Group by** — Overall / Weekly / Monthly / Quarterly
-- **Department** — All or narrow to one team
+- **Department** — which department the report is for
+- **Sewadar** — the whole department, or one person in it
 
-The summary is organised department by department with a subtotal under each
-and a grand total at the bottom, which is how the hand-prepared one reads.
+**Whole department**: a line per sewadar with their days and hours, and the
+department's own total underneath.
 
-Any grouping other than Overall shows a matrix instead: sewadars down the side,
-periods across the top, scrolling horizontally because a year of weeks is wider
-than any tablet.
+**One sewadar**: the days that make up their total — date, arrival, departure,
+hours — so the number can be checked rather than taken on trust. Times entered
+by hand are marked as such.
 
-**Export Excel** writes what is on screen to
-`Downloads/sewa_hours_<range>_<filters>.xlsx`:
+**Export Excel** writes exactly what is on screen to
+`Downloads/sewa_hours_<subject>_<period>.xlsx`, named for what it reports on —
+`sewa_hours_Account_2026-Q3.xlsx`, `sewa_hours_Ranjit-Singh_2026-Q3.xlsx` — so
+a folder of exports can be read without opening any of them:
 
 | Sheet | Contents |
 |---|---|
-| **Summary \<quarter\>** | **The deliverable.** Department blocks, a line per sewadar, the quarter's three months as columns, a subtotal per department and a grand total |
-| Hours by Sewadar | Flat per-person totals: days attended, complete, open, total and average hours, last sewa |
-| *Period* hours / detail | Sewadars × periods matrix and its long-form twin *(only when grouping is not Overall)* |
-| Register | Every underlying row — this is the sheet that used to be typed up by hand |
-| Report Info | The exact quarter and filters used, totals, and how hours are counted |
+| **\<Department\>** or **\<Sewadar\>** | **The deliverable.** For a department: a line per sewadar, the quarter's three months as columns, and the department total. For one sewadar: their sewa days, day by day, and their total |
+| Register | Every underlying row for that scope — the sheet that used to be typed up by hand |
+| Report Info | The department, sewadar, period and filters used, the totals, and how hours are counted |
 
 ### How hours are counted
 
@@ -293,7 +296,7 @@ android/app/src/main/java/org/sewaentry/tablet/
     ├── ManualTimeDialog.kt  The HH:MM stepper
     ├── SignatureDialog.kt   Finger-drawn signature capture
     ├── SewaCalendar.kt      Date bar and month picker
-    ├── StatsScreen.kt       Dropdown filters, totals table, period matrix
+    ├── StatsScreen.kt       Scope dropdowns, department and sewadar reports
     ├── RosterScreen.kt      File picker, import preview, conflict UI
     ├── AdminGate.kt         Custom numeric keypad for PIN entry
     ├── Dialogs.kt           Add sewadar

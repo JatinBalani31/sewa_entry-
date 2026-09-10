@@ -6,7 +6,6 @@ import org.junit.Test
 import org.sewaentry.tablet.data.DayFilter
 import org.sewaentry.tablet.data.Quarter
 import org.sewaentry.tablet.data.ExportRow
-import org.sewaentry.tablet.data.ReportPeriod
 import org.sewaentry.tablet.data.Reporting
 import org.sewaentry.tablet.data.SewaDays
 import org.sewaentry.tablet.data.SewadarRef
@@ -95,41 +94,6 @@ class ReportingTest {
     }
 
     @Test
-    fun `weekly buckets split across calendar weeks`() {
-        // 02 Sep and 06 Sep are the same ISO week; 09 Sep is the next.
-        val rows = listOf(row("2026-09-02"), row("2026-09-06"), row("2026-09-09"))
-        val byPeriod = Reporting.byPeriod(Reporting.filter(rows, DayFilter.ALL), ReportPeriod.WEEKLY)
-
-        assertEquals(2, byPeriod.size)
-        assertEquals(14.0, byPeriod.first { it.periodKey.endsWith("W36") }.hours, 0.001)
-        assertEquals(7.0, byPeriod.first { it.periodKey.endsWith("W37") }.hours, 0.001)
-    }
-
-    @Test
-    fun `an iso week spanning new year keeps one identity`() {
-        // 2026-12-30 (Wed) and 2027-01-03 (Sun) fall in the same ISO week.
-        val rows = listOf(row("2026-12-30"), row("2027-01-03"))
-        val keys = Reporting.periodKeys(Reporting.filter(rows, DayFilter.ALL), ReportPeriod.WEEKLY)
-
-        assertEquals("the week must not split across two years", 1, keys.size)
-    }
-
-    @Test
-    fun `quarterly buckets follow calendar quarters`() {
-        val rows = listOf(row("2026-03-29"), row("2026-09-06"), row("2026-12-30"))
-        val keys = Reporting.periodKeys(Reporting.filter(rows, DayFilter.ALL), ReportPeriod.QUARTERLY)
-
-        assertEquals(listOf("2026-Q1", "2026-Q3", "2026-Q4"), keys)
-    }
-
-    @Test
-    fun `monthly buckets are labelled readably`() {
-        assertEquals("September 2026", Reporting.periodLabel("2026-09", ReportPeriod.MONTHLY))
-        assertEquals("2026 Q3", Reporting.periodLabel("2026-Q3", ReportPeriod.QUARTERLY))
-        assertEquals("2026 week 36", Reporting.periodLabel("2026-W36", ReportPeriod.WEEKLY))
-    }
-
-    @Test
     fun `totals are kept per sewadar`() {
         val rows = listOf(
             row("2026-09-02", name = "Harpreet Singh", sewadarId = 1),
@@ -165,14 +129,6 @@ class ReportingTest {
         val totals = Reporting.totals(Reporting.filter(rows, DayFilter.ALL))
 
         assertEquals("2026-09-13", totals[0].lastAttended)
-    }
-
-    @Test
-    fun `overall grouping collapses everything into one bucket`() {
-        val rows = listOf(row("2026-03-29"), row("2026-09-06"))
-        val keys = Reporting.periodKeys(Reporting.filter(rows, DayFilter.ALL), ReportPeriod.OVERALL)
-
-        assertEquals(1, keys.size)
     }
 
     @Test

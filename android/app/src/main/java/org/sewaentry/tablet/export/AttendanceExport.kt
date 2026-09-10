@@ -6,11 +6,8 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import org.sewaentry.tablet.data.DayFilter
-import org.sewaentry.tablet.data.DepartmentGroup
 import org.sewaentry.tablet.data.ExportRow
-import org.sewaentry.tablet.data.PeriodTotals
 import org.sewaentry.tablet.data.Quarter
-import org.sewaentry.tablet.data.ReportPeriod
 import org.sewaentry.tablet.data.Reporting
 import org.sewaentry.tablet.data.SewaDays
 import org.sewaentry.tablet.data.SewadarTotals
@@ -22,8 +19,8 @@ import java.time.LocalDateTime
  * The hours report.
  *
  * The point of the whole system is answering "how many hours did this person
- * do", so the workbook leads with per-sewadar totals, then breaks those down
- * by whichever period was asked for, and only then shows the raw register.
+ * do", so the workbook leads with the summary that was asked for - one
+ * department, or one sewadar - and only then shows the raw register behind it.
  */
 object AttendanceExport {
 
@@ -31,100 +28,31 @@ object AttendanceExport {
 
     fun build(
         quarter: Quarter,
-        departments: List<DepartmentGroup>,
+        departmentName: String,
+        /** Set when the report is about one person rather than the whole department. */
+        sewadarName: String?,
+        periodLabel: String,
+        totals: List<SewadarTotals>,
         monthlyHours: Map<Pair<Long, String>, Double>,
         sewaDates: List<String>,
-        totals: List<SewadarTotals>,
-        byPeriod: List<PeriodTotals>,
-        periodKeys: List<String>,
         rows: List<ExportRow>,
         from: LocalDate,
         to: LocalDate,
         dayFilter: DayFilter,
-        period: ReportPeriod,
-        departmentName: String?,
     ): List<XlsxWriter.Sheet> {
         val sheets = mutableListOf<XlsxWriter.Sheet>()
 
         // --- 0. The summary --------------------------------------------------
-        // This sheet is the deliverable: the document that used to be prepared
-        // by hand from a stack of paper and a typed-up spreadsheet. It leads
-        // the workbook, is organised department by department with a subtotal
-        // under each, and carries the three months of the quarter as columns.
-        sheets += quarterlySummarySheet(quarter, departments, monthlyHours, sewaDates, from, to)
-
-        // --- 1. Hours per sewadar -------------------------------------------
-        sheets += XlsxWriter.Sheet(
-            name = "Hours by Sewadar",
-            headers = listOf(
-                "Sewadar", "Department", "Days attended", "Days complete",
-                "Open days", "Total hours", "Average hours", "Last sewa",
-            ),
-            columnWidths = listOf(26, 20, 14, 14, 11, 12, 14, 13),
-            rows = totals.map { stat ->
-                listOf(
-                    XlsxWriter.Cell.Text(stat.name),
-                    XlsxWriter.Cell.Text(stat.departmentName ?: "--"),
-                    XlsxWriter.Cell.Number(stat.daysAttended.toDouble()),
-                    XlsxWriter.Cell.Number(stat.daysComplete.toDouble()),
-                    XlsxWriter.Cell.Number(stat.openDays.toDouble()),
-                    XlsxWriter.Cell.Number(round2(stat.hours)),
-                    XlsxWriter.Cell.Number(
-                        if (stat.daysComplete > 0) round2(stat.hours / stat.daysComplete) else 0.0,
-                    ),
-                    XlsxWriter.Cell.Text(stat.lastAttended ?: "--"),
-                )
-            },
-        )
-
-        // --- 2. The period breakdown ----------------------------------------
-        // Sewadars down the side, periods across the top — the shape someone
-        // actually reads when comparing week to week or quarter to quarter.
-        if (period != ReportPeriod.OVERALL && periodKeys.isNotEmpty()) {
-            val byKey = byPeriod.associateBy { it.sewadarId to it.periodKey }
-            val people = totals.map { it.sewadarId to it.name }
-
-            sheets += XlsxWriter.Sheet(
-                name = "${period.label} hours",
-                headers = listOf("Sewadar", "Department") +
-                    periodKeys.map { Reporting.periodLabel(it, period) } +
-                    listOf("Total"),
-                columnWidths = listOf(26, 20) + periodKeys.map { 14 } + listOf(12),
-                rows = people.map { (id, name) ->
-                    val cells = mutableListOf<XlsxWriter.Cell>(
-                        XlsxWriter.Cell.Text(name),
-                        XlsxWriter.Cell.Text(totals.first { it.sewadarId == id }.departmentName ?: "--"),
-                    )
-                    var runningTotal = 0.0
-                    periodKeys.forEach { key ->
-                        val hours = byKey[id to key]?.hours ?: 0.0
-                        runningTotal += hours
-                        cells += XlsxWriter.Cell.Number(round2(hours))
-                    }
-                    cells += XlsxWriter.Cell.Number(round2(runningTotal))
-                    cells
-                },
-            )
-
-            // The same numbers long-form, which is what a pivot table wants.
-            sheets += XlsxWriter.Sheet(
-                name = "${period.label} detail",
-                headers = listOf("Sewadar", "Department", period.label, "Days", "Complete", "Hours"),
-                columnWidths = listOf(26, 20, 18, 10, 11, 11),
-                rows = byPeriod.map {
-                    listOf(
-                        XlsxWriter.Cell.Text(it.name),
-                        XlsxWriter.Cell.Text(it.departmentName ?: "--"),
-                        XlsxWriter.Cell.Text(it.periodLabel),
-                        XlsxWriter.Cell.Number(it.daysAttended.toDouble()),
-                        XlsxWriter.Cell.Number(it.daysComplete.toDouble()),
-                        XlsxWriter.Cell.Number(round2(it.hours)),
-                    )
-                },
-            )
+        // One report, one subject: either a department's sewadars or a single
+        // sewadar's days. Whichever it is leads the workbook, because it is the
+        // thing somebody actually asked for.
+        sheets += if (sewadarName != null) {
+            sewadarSheet(sewadarName, departmentName, periodLabel, rows, totals)
+        } else {
+            departmentSheet(departmentName, periodLabel, quarter, totals, monthlyHours)
         }
 
-        // --- 3. The register itself -----------------------------------------
+        // --- 1. The register itself -----------------------------------------
         sheets += XlsxWriter.Sheet(
             name = "Register",
             headers = listOf(
@@ -151,21 +79,21 @@ object AttendanceExport {
             },
         )
 
-        // --- 4. What this report is -----------------------------------------
+        // --- 2. What this report is -----------------------------------------
         sheets += XlsxWriter.Sheet(
             name = "Report Info",
             headers = listOf("Field", "Value"),
             columnWidths = listOf(24, 44),
-            rows = listOf(
+            rows = listOfNotNull(
                 row("Generated", LocalDateTime.now().toString()),
-                row("Quarter", "${quarter.label} (${quarter.monthsLabel})"),
-                row("Sewa days covered", sewaDates.size.toString()),
+                row("Department", departmentName),
+                sewadarName?.let { row("Sewadar", it) },
+                row("Period", periodLabel),
                 row("Period start", SewaDays.format(from)),
                 row("Period end", SewaDays.format(to)),
                 row("Sewa days included", dayFilter.label),
-                row("Grouping", period.label),
-                row("Department", departmentName ?: "All departments"),
-                row("Sewadars", totals.size.toString()),
+                row("Sewa days covered", sewaDates.size.toString()),
+                row("Sewadars in report", totals.size.toString()),
                 row("Attendance rows", rows.size.toString()),
                 row("Total hours", round2(totals.sumOf { it.hours }).toString()),
                 row(
@@ -180,90 +108,118 @@ object AttendanceExport {
     }
 
     /**
+     * One department over the chosen period: a line per sewadar, the quarter's
+     * months as columns, and one total underneath. The same shape as the
+     * summary that used to be prepared by hand, narrowed to the single
+     * department being asked about.
+     */
+    private fun departmentSheet(
+        departmentName: String,
+        periodLabel: String,
+        quarter: Quarter,
+        totals: List<SewadarTotals>,
+        monthlyHours: Map<Pair<Long, String>, Double>,
+    ): XlsxWriter.Sheet {
+        val monthKeys = quarter.monthKeys
+        val body = mutableListOf<List<XlsxWriter.Cell>>()
+
+        totals.sortedBy { it.name }.forEach { person ->
+            val cells = mutableListOf<XlsxWriter.Cell>(
+                XlsxWriter.Cell.Text(person.name),
+                XlsxWriter.Cell.Number(person.daysAttended.toDouble()),
+                XlsxWriter.Cell.Number(person.daysComplete.toDouble()),
+            )
+            monthKeys.forEach { key ->
+                cells += XlsxWriter.Cell.Number(round2(monthlyHours[person.sewadarId to key] ?: 0.0))
+            }
+            cells += XlsxWriter.Cell.Number(round2(person.hours))
+            cells += XlsxWriter.Cell.Text(person.lastAttended ?: "--")
+            body += cells
+        }
+
+        // The department's own total - the number the report exists to state.
+        val totalCells = mutableListOf<XlsxWriter.Cell>(
+            XlsxWriter.Cell.Text("$departmentName total"),
+            XlsxWriter.Cell.Number(totals.sumOf { it.daysAttended }.toDouble()),
+            XlsxWriter.Cell.Number(totals.sumOf { it.daysComplete }.toDouble()),
+        )
+        monthKeys.forEach { key ->
+            totalCells += XlsxWriter.Cell.Number(
+                round2(totals.sumOf { monthlyHours[it.sewadarId to key] ?: 0.0 }),
+            )
+        }
+        totalCells += XlsxWriter.Cell.Number(round2(totals.sumOf { it.hours }))
+        totalCells += XlsxWriter.Cell.Text("")
+        body += totalCells
+
+        return XlsxWriter.Sheet(
+            name = sheetName(departmentName),
+            headers = listOf("Sewadar ($periodLabel)", "Days attended", "Days complete") +
+                quarter.monthLabels + listOf("Total hours", "Last sewa"),
+            columnWidths = listOf(28, 14, 15) + monthKeys.map { 12 } + listOf(12, 13),
+            rows = body,
+        )
+    }
+
+    /**
+     * One sewadar over the chosen period, day by day. This is the answer to
+     * "how many hours has this person done", with the days that produced the
+     * number listed under it rather than summarised away.
+     */
+    private fun sewadarSheet(
+        sewadarName: String,
+        departmentName: String,
+        periodLabel: String,
+        rows: List<ExportRow>,
+        totals: List<SewadarTotals>,
+    ): XlsxWriter.Sheet {
+        val body = mutableListOf<List<XlsxWriter.Cell>>()
+
+        rows.sortedBy { it.sewaDate }.forEach { row ->
+            val minutes = SewaDays.minutesBetween(row.arrivalAt, row.departureAt)
+            body += listOf(
+                XlsxWriter.Cell.Text(row.sewaDate),
+                XlsxWriter.Cell.Text(dayName(row.sewaDate)),
+                XlsxWriter.Cell.Text(SewaDays.formatTime(row.arrivalAt)),
+                XlsxWriter.Cell.Text(SewaDays.formatTime(row.departureAt)),
+                if (minutes != null) XlsxWriter.Cell.Number(round2(minutes / 60.0))
+                else XlsxWriter.Cell.Text("no sign-out"),
+            )
+        }
+
+        val total = totals.firstOrNull()
+        val days = total?.daysAttended ?: 0
+        body += listOf(
+            XlsxWriter.Cell.Text("Total"),
+            XlsxWriter.Cell.Text("$days ${if (days == 1) "day" else "days"}"),
+            XlsxWriter.Cell.Text(""),
+            XlsxWriter.Cell.Text(""),
+            XlsxWriter.Cell.Number(round2(total?.hours ?: 0.0)),
+        )
+
+        return XlsxWriter.Sheet(
+            name = sheetName(sewadarName),
+            headers = listOf(
+                "$sewadarName - $departmentName ($periodLabel)",
+                "Day", "Arrival", "Departure", "Hours",
+            ),
+            columnWidths = listOf(30, 11, 10, 11, 10),
+            rows = body,
+        )
+    }
+
+    /** Excel refuses some characters in a tab name, and caps it at 31. */
+    private fun sheetName(subject: String): String =
+        subject.replace(Regex("[\\\\/*?\\[\\]:]"), " ").trim().take(28).ifEmpty { "Summary" }
+
+
+    /**
      * The quarterly summary, laid out the way the hand-prepared one is:
      * department by department, a line per sewadar, a subtotal under each
      * department, and a grand total at the bottom. The three months of the
      * quarter sit as columns so the shape of someone's attendance is visible
      * without opening another sheet.
      */
-    private fun quarterlySummarySheet(
-        quarter: Quarter,
-        departments: List<DepartmentGroup>,
-        monthlyHours: Map<Pair<Long, String>, Double>,
-        sewaDates: List<String>,
-        from: LocalDate,
-        to: LocalDate,
-    ): XlsxWriter.Sheet {
-        val monthKeys = quarter.monthKeys
-        val monthLabels = quarter.monthLabels
-
-        val rows = mutableListOf<List<XlsxWriter.Cell>>()
-
-        departments.forEach { group ->
-            group.sewadars.forEach { person ->
-                val cells = mutableListOf<XlsxWriter.Cell>(
-                    XlsxWriter.Cell.Text(group.departmentName),
-                    XlsxWriter.Cell.Text(person.name),
-                    XlsxWriter.Cell.Number(person.daysAttended.toDouble()),
-                )
-                monthKeys.forEach { key ->
-                    cells += XlsxWriter.Cell.Number(round2(monthlyHours[person.sewadarId to key] ?: 0.0))
-                }
-                cells += XlsxWriter.Cell.Number(round2(person.hours))
-                cells += XlsxWriter.Cell.Number(
-                    if (person.daysComplete > 0) round2(person.hours / person.daysComplete) else 0.0,
-                )
-                cells += if (person.openDays > 0) {
-                    XlsxWriter.Cell.Number(person.openDays.toDouble())
-                } else {
-                    XlsxWriter.Cell.Text("")
-                }
-                rows += cells
-            }
-
-            // Subtotal line, so each department can be read on its own.
-            val subtotal = mutableListOf<XlsxWriter.Cell>(
-                XlsxWriter.Cell.Text(group.departmentName),
-                XlsxWriter.Cell.Text("TOTAL - ${group.activeCount} sewadar(s)"),
-                XlsxWriter.Cell.Number(group.daysAttended.toDouble()),
-            )
-            monthKeys.forEach { key ->
-                val monthTotal = group.sewadars.sumOf { monthlyHours[it.sewadarId to key] ?: 0.0 }
-                subtotal += XlsxWriter.Cell.Number(round2(monthTotal))
-            }
-            subtotal += XlsxWriter.Cell.Number(round2(group.hours))
-            subtotal += XlsxWriter.Cell.Text("")
-            subtotal += if (group.openDays > 0) XlsxWriter.Cell.Number(group.openDays.toDouble()) else XlsxWriter.Cell.Text("")
-            rows += subtotal
-        }
-
-        if (departments.isNotEmpty()) {
-            val grand = mutableListOf<XlsxWriter.Cell>(
-                XlsxWriter.Cell.Text("ALL DEPARTMENTS"),
-                XlsxWriter.Cell.Text("GRAND TOTAL"),
-                XlsxWriter.Cell.Number(departments.sumOf { it.daysAttended }.toDouble()),
-            )
-            monthKeys.forEach { key ->
-                val monthTotal = departments.sumOf { group ->
-                    group.sewadars.sumOf { monthlyHours[it.sewadarId to key] ?: 0.0 }
-                }
-                grand += XlsxWriter.Cell.Number(round2(monthTotal))
-            }
-            grand += XlsxWriter.Cell.Number(round2(departments.sumOf { it.hours }))
-            grand += XlsxWriter.Cell.Text("")
-            grand += XlsxWriter.Cell.Number(departments.sumOf { it.openDays }.toDouble())
-            rows += grand
-        }
-
-        return XlsxWriter.Sheet(
-            name = "Summary ${quarter.label}",
-            headers = listOf("Department", "Sewadar", "Days") +
-                monthLabels.map { "$it hrs" } +
-                listOf("Total hours", "Avg / day", "Open days"),
-            columnWidths = listOf(22, 26, 8) + monthLabels.map { 10 } + listOf(12, 11, 11),
-            rows = rows,
-        )
-    }
 
     private fun row(label: String, value: String) =
         listOf(XlsxWriter.Cell.Text(label), XlsxWriter.Cell.Text(value))

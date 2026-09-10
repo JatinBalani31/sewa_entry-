@@ -36,7 +36,11 @@ object BackupManager {
         val db = SewaDatabase.get(context)
         // Checkpoint: flush the WAL into the main database file so the copy
         // is self-contained. Room keeps the connection open, so this is safe.
-        db.openHelper.writableDatabase.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
+        // execSQL refuses anything that returns rows, and a checkpoint pragma
+        // reports how much it moved - so it has to be run as a query.
+        db.openHelper.writableDatabase
+            .query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .use { it.moveToFirst() }
 
         val dbFile = context.getDatabasePath(DB_NAME)
         context.contentResolver.openOutputStream(uri)?.use { out ->

@@ -23,9 +23,7 @@ import org.sewaentry.tablet.data.DayFilter
 import org.sewaentry.tablet.data.DepartmentEntity
 import org.sewaentry.tablet.data.DepartmentGroup
 import org.sewaentry.tablet.data.ExportRow
-import org.sewaentry.tablet.data.PeriodTotals
 import org.sewaentry.tablet.data.Quarter
-import org.sewaentry.tablet.data.ReportPeriod
 import org.sewaentry.tablet.data.Reporting
 import org.sewaentry.tablet.data.SewaDatabase
 import org.sewaentry.tablet.data.SewaDays
@@ -42,8 +40,6 @@ import java.time.LocalDate
 data class ReportState(
     val totals: List<SewadarTotals> = emptyList(),
     val departments: List<DepartmentGroup> = emptyList(),
-    val byPeriod: List<PeriodTotals> = emptyList(),
-    val periodKeys: List<String> = emptyList(),
     val monthlyHours: Map<Pair<Long, String>, Double> = emptyMap(),
     val sewaDates: List<String> = emptyList(),
     val rows: List<ExportRow> = emptyList(),
@@ -183,15 +179,15 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
     private val _from = MutableStateFlow(Quarter.current().start)
     private val _to = MutableStateFlow(Quarter.current().end)
     private val _dayFilter = MutableStateFlow(DayFilter.ALL)
-    private val _period = MutableStateFlow(ReportPeriod.OVERALL)
     private val _reportDepartmentId = MutableStateFlow<Long?>(null)
+    private val _reportSewadarId = MutableStateFlow<Long?>(null)
 
     val quarter: StateFlow<Quarter> = _quarter.asStateFlow()
     val from: StateFlow<LocalDate> = _from.asStateFlow()
     val to: StateFlow<LocalDate> = _to.asStateFlow()
     val dayFilter: StateFlow<DayFilter> = _dayFilter.asStateFlow()
-    val period: StateFlow<ReportPeriod> = _period.asStateFlow()
     val reportDepartmentId: StateFlow<Long?> = _reportDepartmentId.asStateFlow()
+    val reportSewadarId: StateFlow<Long?> = _reportSewadarId.asStateFlow()
 
     /**
      * What the period dropdown reads. Held rather than derived, because
@@ -224,24 +220,43 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
      * the filtering and bucketing is the part most likely to be wrong, and
      * this way it is pure, shared with the Excel export, and unit-tested.
      */
+    init {
+        // A report needs a department to be about. Rather than opening on a
+        // meaningless total across the whole sangat, the summary lands on the
+        // first department and the admin changes it from there.
+        viewModelScope.launch {
+            departments.collect { list ->
+                val current = _reportDepartmentId.value
+                if (current == null || list.none { it.id == current }) {
+                    _reportDepartmentId.value = list.firstOrNull()?.id
+                }
+            }
+        }
+    }
+
     val report: StateFlow<ReportState> =
-        combine(_from, _to, _dayFilter, _period, _reportDepartmentId) { from, to, day, period, dept ->
-            listOf(from, to, day, period, dept)
+        combine(_from, _to, _dayFilter, _reportDepartmentId, _reportSewadarId) { f, t, d, dept, who ->
+            listOf(f, t, d, dept, who)
         }.flatMapLatest {
             flowOf(Unit).map {
                 val all = repo.exportRows(_from.value, _to.value)
-                val scoped = if (_reportDepartmentId.value == null) all
-                    else all.filter { it.departmentId == _reportDepartmentId.value }
+                // A report is always about one department, and optionally one
+                // person within it. A total across the whole sangat is a
+                // number nobody asked for.
+                val inDepartment = all.filter { it.departmentId == _reportDepartmentId.value }
+                val scoped = _reportSewadarId.value
+                    ?.let { id -> inDepartment.filter { row -> row.sewadarId == id } }
+                    ?: inDepartment
                 val filtered = Reporting.filter(scoped, _dayFilter.value)
+
                 val roster = repo.rosterRefs(_reportDepartmentId.value)
+                    .filter { _reportSewadarId.value == null || it.id == _reportSewadarId.value }
 
                 val totals = Reporting.totals(filtered, roster)
 
                 ReportState(
                     totals = totals,
                     departments = Reporting.byDepartment(totals),
-                    byPeriod = Reporting.byPeriod(filtered, _period.value),
-                    periodKeys = Reporting.periodKeys(filtered, _period.value),
                     monthlyHours = Reporting.monthlyHours(filtered),
                     sewaDates = Reporting.sewaDatesIn(filtered),
                     rows = filtered,
@@ -259,12 +274,14 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
         _dayFilter.value = value
     }
 
-    fun setPeriod(value: ReportPeriod) {
-        _period.value = value
-    }
-
     fun setReportDepartment(id: Long?) {
         _reportDepartmentId.value = id
+        // Whoever was picked belonged to the department being left.
+        _reportSewadarId.value = null
+    }
+
+    fun setReportSewadar(id: Long?) {
+        _reportSewadarId.value = id
     }
 
     // --- Admin lock --------------------------------------------------------
@@ -411,30 +428,33 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
     fun exportExcel() = viewModelScope.launch {
         try {
             val state = report.value
-            val departmentName = departments.value.firstOrNull { it.id == _reportDepartmentId.value }?.name
+            val departmentName = departments.value
+                .firstOrNull { it.id == _reportDepartmentId.value }?.name
+                ?: "All departments"
+            val sewadarName = _reportSewadarId.value
+                ?.let { id -> state.totals.firstOrNull { it.sewadarId == id }?.name }
 
             val sheets = AttendanceExport.build(
                 quarter = _quarter.value,
-                departments = state.departments,
+                departmentName = departmentName,
+                sewadarName = sewadarName,
+                periodLabel = _periodLabel.value,
+                totals = state.totals,
                 monthlyHours = state.monthlyHours,
                 sewaDates = state.sewaDates,
-                totals = state.totals,
-                byPeriod = state.byPeriod,
-                periodKeys = state.periodKeys,
                 rows = state.rows,
                 from = _from.value,
                 to = _to.value,
                 dayFilter = _dayFilter.value,
-                period = _period.value,
-                departmentName = departmentName,
             )
 
+            // The file name says what the report is about, so a folder of
+            // exports can be read without opening any of them.
             val tag = buildString {
-                append(SewaDays.format(_from.value))
-                append("_to_")
-                append(SewaDays.format(_to.value))
+                append((sewadarName ?: departmentName).replace(Regex("""[^A-Za-z0-9]+"""), "-").trim('-'))
+                append("_")
+                append(_periodLabel.value.replace(Regex("""[^A-Za-z0-9]+"""), "-").trim('-'))
                 if (_dayFilter.value != DayFilter.ALL) append("_${_dayFilter.value.name.lowercase()}")
-                if (_period.value != ReportPeriod.OVERALL) append("_${_period.value.name.lowercase()}")
             }
             val saved = AttendanceExport.save(getApplication(), "sewa_hours_$tag.xlsx", sheets)
             _message.value = "Saved ${saved.fileName} to ${saved.location}."

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -40,12 +41,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -80,6 +84,10 @@ fun RegisterScreen(vm: RegisterViewModel) {
     val isToday by vm.isToday.collectAsState()
 
     var capture by remember { mutableStateOf<Capture?>(null) }
+    // The action bar floats over the grid, so the grid needs to know how tall
+    // it is - otherwise the last row of tiles sits underneath it, unreadable
+    // and untappable.
+    var actionBarHeightPx by remember { mutableIntStateOf(0) }
     var addingSewadar by remember { mutableStateOf(false) }
     var manualFor by remember { mutableStateOf<SewadarWithStatus?>(null) }
 
@@ -171,6 +179,12 @@ fun RegisterScreen(vm: RegisterViewModel) {
                     columns = GridCells.Adaptive(minSize = 260.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
+                    // Leave room underneath for the floating action bar, so the
+                    // last tile can be scrolled clear of it rather than sitting
+                    // behind it.
+                    contentPadding = PaddingValues(
+                        bottom = with(LocalDensity.current) { actionBarHeightPx.toDp() },
+                    ),
                     modifier = Modifier.weight(1f),
                 ) {
                     items(roster, key = { it.sewadarId }) { sewadar ->
@@ -188,6 +202,8 @@ fun RegisterScreen(vm: RegisterViewModel) {
             }
         }
 
+        if (selected == null && actionBarHeightPx != 0) actionBarHeightPx = 0
+
         selected?.let { sewadar ->
             val compact = isCompactWidth()
             ActionBar(
@@ -201,6 +217,9 @@ fun RegisterScreen(vm: RegisterViewModel) {
                 onManual = { manualFor = sewadar },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
+                    // Outside the padding, so the grid is told the whole
+                    // footprint the bar occupies, gap included.
+                    .onSizeChanged { actionBarHeightPx = it.height }
                     .padding(if (compact) 12.dp else 20.dp)
                     .let { if (compact) it.fillMaxWidth() else it },
             )
