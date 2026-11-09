@@ -17,8 +17,11 @@ export default function DashboardPage() {
 
   const load = useCallback(async () => {
     try {
-      const roster = await api.get(`/attendance/roster?date=${date}`);
-      setData(roster);
+      const [roster, report] = await Promise.all([
+        api.get(`/attendance/roster?date=${date}`),
+        api.get(`/reports/summary?startDate=${date}&endDate=${date}`),
+      ]);
+      setData({ ...roster, departments: report.departments });
       setRefreshedAt(new Date());
       setError('');
     } catch (err) {
@@ -39,16 +42,14 @@ export default function DashboardPage() {
   const hours = present.reduce((total, r) => total + (r.hours || 0), 0);
 
   // Group by department so an admin sees which teams turned out.
-  const byDepartment = new Map();
-  for (const row of data.roster) {
-    const name = row.department_name || 'No department';
-    if (!byDepartment.has(name)) byDepartment.set(name, { name, total: 0, present: 0, stillIn: 0 });
-    const bucket = byDepartment.get(name);
-    bucket.total++;
-    if (row.in_time) bucket.present++;
-    if (row.in_time && !row.out_time) bucket.stillIn++;
-  }
-  const departments = [...byDepartment.values()].sort((a, b) => b.present - a.present);
+  const departments = data.departments
+    .map((department) => ({
+      name: department.departmentName,
+      total: department.sewadarCount,
+      present: department.attendances,
+      stillIn: department.missingOutTime,
+    }))
+    .sort((a, b) => b.present - a.present || a.name.localeCompare(b.name));
 
   return (
     <div className="stack">

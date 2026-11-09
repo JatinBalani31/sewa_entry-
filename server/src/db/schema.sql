@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS sewadars (
     id VARCHAR(50) PRIMARY KEY,
     full_name VARCHAR(100) NOT NULL,
     phone VARCHAR(20),
+    organization VARCHAR(100),
     email VARCHAR(100) UNIQUE,
     department_id INT REFERENCES departments(id) ON DELETE SET NULL,
     secret_pin_hash VARCHAR(255) NOT NULL,
@@ -47,6 +48,8 @@ CREATE TABLE IF NOT EXISTS sewadars (
     joined_on DATE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE sewadars ADD COLUMN IF NOT EXISTS organization VARCHAR(100);
 
 -- 3. ATTENDANCE
 --    department_id is a snapshot taken when the record is created, so a

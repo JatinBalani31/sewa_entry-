@@ -108,6 +108,7 @@ export default function SewadarsPage() {
               <th>Sewadar</th>
               <th>Department</th>
               <th>Phone</th>
+              <th>Organization</th>
               <th>Role</th>
               <th>Status</th>
               <th />
@@ -115,9 +116,9 @@ export default function SewadarsPage() {
           </thead>
           <tbody>
             {loading && sewadars.length === 0 ? (
-              <EmptyRow colSpan={6}><Spinner label="Loading Sewadars…" /></EmptyRow>
+              <EmptyRow colSpan={7}><Spinner label="Loading Sewadars…" /></EmptyRow>
             ) : sewadars.length === 0 ? (
-              <EmptyRow colSpan={6}>No Sewadars match this search.</EmptyRow>
+              <EmptyRow colSpan={7}>No Sewadars match this search.</EmptyRow>
             ) : (
               sewadars.map((sewadar) => (
                 <tr key={sewadar.id}>
@@ -129,6 +130,7 @@ export default function SewadarsPage() {
                   </td>
                   <td data-label="Department">{sewadar.department_name || <span className="faint">Unassigned</span>}</td>
                   <td data-label="Phone" className="mono">{sewadar.phone || '—'}</td>
+                  <td data-label="Organization">{sewadar.organization || '—'}</td>
                   <td data-label="Role">
                     <span className={`badge ${sewadar.role === 'ADMIN' ? 'badge-admin' : 'badge-neutral'}`}>
                       {sewadar.role === 'ADMIN' ? 'Admin' : 'Sewadar'}
@@ -202,6 +204,7 @@ function SewadarModal({ sewadar, departments, onClose, onDone }) {
     id: sewadar?.id || '',
     full_name: sewadar?.full_name || '',
     phone: sewadar?.phone || '',
+    organization: sewadar?.organization || '',
     email: sewadar?.email || '',
     department_id: sewadar?.department_id ? String(sewadar.department_id) : '',
     role: sewadar?.role || 'SEWADAR',
@@ -223,6 +226,7 @@ function SewadarModal({ sewadar, departments, onClose, onDone }) {
           body: {
             full_name: form.full_name,
             phone: form.phone || null,
+            organization: form.organization || null,
             email: form.email || null,
             department_id: form.department_id ? Number(form.department_id) : null,
             role: form.role,
@@ -235,6 +239,7 @@ function SewadarModal({ sewadar, departments, onClose, onDone }) {
             id: form.id.trim().toUpperCase(),
             full_name: form.full_name,
             phone: form.phone || null,
+            organization: form.organization || null,
             email: form.email || null,
             department_id: form.department_id ? Number(form.department_id) : null,
             role: form.role,
@@ -286,16 +291,21 @@ function SewadarModal({ sewadar, departments, onClose, onDone }) {
 
         <div className="field-row">
           <div className="field">
-            <label htmlFor="sw-phone">Phone (optional)</label>
+            <label htmlFor="sw-phone">Contact (optional)</label>
             <input id="sw-phone" type="tel" inputMode="tel" value={form.phone} onChange={set('phone')} />
           </div>
           <div className="field">
-            <label htmlFor="sw-dept">Department</label>
-            <select id="sw-dept" value={form.department_id} onChange={set('department_id')}>
-              <option value="">Unassigned</option>
-              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
+            <label htmlFor="sw-organization">Organization (optional)</label>
+            <input id="sw-organization" value={form.organization} onChange={set('organization')} />
           </div>
+        </div>
+
+        <div className="field">
+          <label htmlFor="sw-dept">Department</label>
+          <select id="sw-dept" value={form.department_id} onChange={set('department_id')}>
+            <option value="">Unassigned</option>
+            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
         </div>
 
         <div className="field">

@@ -1,3 +1,53 @@
+## Current Product Status and Web Portal Roadmap
+
+This section supersedes the older GPS/geofence proposal below. The implemented
+product is an offline Android tablet register plus a React web console backed
+by the Node/Postgres API. The tablet is still the attendance device of record;
+it does not synchronize with the API yet.
+
+### Current MVP
+
+- Keep tablet **Analytics** available while the tablet is offline. Remove it
+  only after the web portal is live and the tablet has reliable internet and
+  tested synchronization.
+- The web console already provides administrator Dashboard, Register,
+  Sewadars, Departments, Reports, and Excel export surfaces.
+- The demo seed includes the 40 populated departments parsed from
+  `All Sewadar Mobile No.xlsx`. Demo attendance and demo accounts are
+  illustrative only; they are not imported member records or live attendance.
+- The dashboard and reports should show departments even when they have no
+  members or attendance in the selected period.
+
+### Alignment and delivery phases
+
+1. **Department and roster master:** provide a preview-first web import for
+   tablet roster workbooks. Preserve department names, contacts, optional
+   organization, and HOD markers. Match existing people conservatively, show
+   conflicts before applying changes, and never delete attendance history.
+2. **Analytics MVP:** validate daily arrival/departure, open-day exceptions,
+   department turnout and hours against the tablet's reporting rules. Keep
+   demo data clearly labelled until real tablet sync is enabled.
+3. **Tablet synchronization:** define stable device/member IDs, idempotent
+   attendance event uploads, retries, auditability, conflict resolution, and
+   recovery before making the portal authoritative. Do not remove tablet
+   analytics until this is deployed and verified on the connected device.
+4. **Dynamic forms and signatures:** allow authorized admins to configure
+   versioned form fields and collect submissions. Support Secretary and Area
+   Secretary signature assets and produce a final signed document only after
+   the form schema, signer order, placements, permissions, and output format
+   are confirmed.
+
+The actual roster workbook is kept outside the repository because it contains
+personal contact information. Do not commit the workbook or copy member
+contacts into demo seed code.
+
+---
+
+## Legacy proposal (not current implementation)
+
+The sections below describe an earlier GPS-based proposal and must not be
+treated as implemented behavior or the current product roadmap.
+
 System Requirements & Master Execution Document: Local Attendance Monitoring System1. Executive SummaryThis document specifies the technical architecture, database schema, operational protocols, phase-wise execution plan, and developer hand-off directives for a dual-mode Local Attendance Monitoring System.The system provides robust attendance tracking through two core pathways:Personal Mobile App (GPS Geofenced) – Individual verification based on real-time location.Shared Kiosk Tablet (Manual PIN / Signature) – On-site fallback for employees who do not have their mobile devices.All data is synchronized to a central local/cloud server managed via a Web Admin Console, capable of real-time monitoring, manual admin overrides, and structured Excel report exports.2. Master System Architecture.
 
                                    +-------------------------------------+
@@ -119,3 +169,51 @@ SYSTEM: Attendance System Construction (Client Mobile + Kiosk Tablet + Admin Con
    [Log ID | User ID | Employee Name | Date | Time | Type (IN/OUT) | Verification Method | Site Name | Verified By Admin]
 
 7. Sample Data Export Layout (Excel Sheet Output)Log IDUser IDEmployee NameDateTimeTypeVerification MethodSite NameVerified By AdminNotes1001EMP004John Doe2026-08-2808:58:12INGPSMain OfficeN/AValid Geofence1002EMP012Jane Smith2026-08-2809:02:45INMANUAL_PINKiosk Station 1N/APhone Left Home1003EMP007Alex Wong2026-08-2809:15:00INADMIN_OVERRIDEMain OfficeADM001Approved late arrival1004EMP004John Doe2026-08-2817:01:30OUTGPSMain OfficeN/AValid Geofence
+
+---
+
+## Tablet Face Enrollment and Transfer
+
+The Android tablet app follows the device's auto-rotate setting. In landscape,
+face enrollment keeps controls in a scrollable left pane and the camera preview
+fixed in the right pane.
+
+Face enrollment stores encrypted face embeddings and consent metadata; camera
+images are not saved. The standard Google Drive database backup excludes face templates
+because its Android Keystore encryption key is device-specific. To collect
+enrollments on multiple tablets, an admin can export a `.sewaface` file from
+Face data import / export in the Roster tab. The file has no password and
+contains readable biometric embeddings; store it securely.
+
+Import requires the roster to be present on the destination. Entries are matched
+by sewadar name within the department, re-encrypted with the destination tablet's
+key, and replace the destination face gallery. Entries without a matching
+person are skipped and reported. Roster and attendance remain on the device.
+
+The Roster tab also creates a full `.sewabackup` file containing roster,
+attendance, and face entries under one password. Save it to local device storage
+or external storage and retain the password separately; Restore validates the
+database before replacing the current one and re-encrypts face entries for the
+tablet. App updates preserve the existing private database through explicit
+Room migrations, so update the installed app without uninstalling or clearing
+its storage.
+
+## 8. Face Detection Error & Attendance Correction SOP
+
+In case of any error in face detection (lighting issues, un-enrolled sewadar, angle mismatch, or liveness timeout), the following standard operating procedure must be followed:
+
+### Reporting Protocol
+1. **Immediate Notification**: If the kiosk scanner fails to recognize a person or displays an error/cooldown warning, the sewadar reports immediately to the counter administrator or their department Head of Department (HOD).
+2. **Details Given**: The sewadar provides their full name, department, and approximate arrival or departure time.
+
+### Correction Workflow (Counter Administrator)
+1. **Unlock Tablet**: Administrator unlocks the **Manual Entry** tab using the 6-digit Admin PIN.
+2. **Find Sewadar**: Select the department and tap the sewadar's tile.
+3. **Record / Set Attendance**:
+   - For live check-in: Tap **Arrival** or **Departure** on the action bar to record at the current time.
+   - For specific time: Tap **Manual** to open the time picker dialog:
+     - Default Arrival Time: **7:00 AM**
+     - Default Departure Time: **14:00 PM (2:00 PM)**
+     - Adjust hour/minute and tap **Save time**.
+4. **Audit Star-Marking**: All manual entries are automatically star-marked (`*`) across the register, analytics, and exported Excel sheets. No finger signatures or admin IDs are required during manual entry.
+5. **Re-Enrollment**: If face recognition failures recur, the admin navigates to **Face enrollment** via the top-right menu to delete outdated templates and re-enroll the sewadar.

@@ -1,0 +1,373 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 3,
+    "identityHash": "5089a041115adfaec81961a6e003424f",
+    "entities": [
+      {
+        "tableName": "departments",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `isActive` INTEGER NOT NULL, `sortOrder` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isActive",
+            "columnName": "isActive",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_departments_name",
+            "unique": true,
+            "columnNames": [
+              "name"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_departments_name` ON `${TABLE_NAME}` (`name`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "sewadars",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `departmentId` INTEGER, `phone` TEXT, `phone2` TEXT DEFAULT NULL, `isHod` INTEGER NOT NULL DEFAULT 0, `isActive` INTEGER NOT NULL, FOREIGN KEY(`departmentId`) REFERENCES `departments`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "departmentId",
+            "columnName": "departmentId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "phone",
+            "columnName": "phone",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "phone2",
+            "columnName": "phone2",
+            "affinity": "TEXT",
+            "notNull": false,
+            "defaultValue": "NULL"
+          },
+          {
+            "fieldPath": "isHod",
+            "columnName": "isHod",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "isActive",
+            "columnName": "isActive",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_sewadars_departmentId",
+            "unique": false,
+            "columnNames": [
+              "departmentId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sewadars_departmentId` ON `${TABLE_NAME}` (`departmentId`)"
+          },
+          {
+            "name": "index_sewadars_name",
+            "unique": false,
+            "columnNames": [
+              "name"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sewadars_name` ON `${TABLE_NAME}` (`name`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "departments",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "departmentId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "attendance",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sewadarId` INTEGER NOT NULL, `sewaDate` TEXT NOT NULL, `departmentId` INTEGER, `arrivalAt` INTEGER, `departureAt` INTEGER, `arrivalMethod` TEXT, `departureMethod` TEXT, `arrivalAdminId` TEXT, `departureAdminId` TEXT, `arrivalNote` TEXT, `departureNote` TEXT, `arrivalSignature` TEXT, `departureSignature` TEXT, `arrivalEdited` INTEGER NOT NULL, `departureEdited` INTEGER NOT NULL, `note` TEXT DEFAULT NULL, `updatedAt` INTEGER NOT NULL, FOREIGN KEY(`sewadarId`) REFERENCES `sewadars`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sewadarId",
+            "columnName": "sewadarId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sewaDate",
+            "columnName": "sewaDate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "departmentId",
+            "columnName": "departmentId",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "arrivalAt",
+            "columnName": "arrivalAt",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "departureAt",
+            "columnName": "departureAt",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "arrivalMethod",
+            "columnName": "arrivalMethod",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "departureMethod",
+            "columnName": "departureMethod",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "arrivalAdminId",
+            "columnName": "arrivalAdminId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "departureAdminId",
+            "columnName": "departureAdminId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "arrivalNote",
+            "columnName": "arrivalNote",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "departureNote",
+            "columnName": "departureNote",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "arrivalSignature",
+            "columnName": "arrivalSignature",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "departureSignature",
+            "columnName": "departureSignature",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "arrivalEdited",
+            "columnName": "arrivalEdited",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "departureEdited",
+            "columnName": "departureEdited",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT",
+            "notNull": false,
+            "defaultValue": "NULL"
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_attendance_sewadarId_sewaDate",
+            "unique": true,
+            "columnNames": [
+              "sewadarId",
+              "sewaDate"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_attendance_sewadarId_sewaDate` ON `${TABLE_NAME}` (`sewadarId`, `sewaDate`)"
+          },
+          {
+            "name": "index_attendance_sewaDate",
+            "unique": false,
+            "columnNames": [
+              "sewaDate"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_attendance_sewaDate` ON `${TABLE_NAME}` (`sewaDate`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "sewadars",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sewadarId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "attendance_override_audit",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sewadarId` INTEGER NOT NULL, `sewaDate` TEXT NOT NULL, `action` TEXT NOT NULL, `adminId` TEXT NOT NULL, `note` TEXT NOT NULL, `occurredAt` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sewadarId",
+            "columnName": "sewadarId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sewaDate",
+            "columnName": "sewaDate",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "action",
+            "columnName": "action",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "adminId",
+            "columnName": "adminId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "note",
+            "columnName": "note",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "occurredAt",
+            "columnName": "occurredAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_attendance_override_audit_sewadarId_sewaDate",
+            "unique": false,
+            "columnNames": [
+              "sewadarId",
+              "sewaDate"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_attendance_override_audit_sewadarId_sewaDate` ON `${TABLE_NAME}` (`sewadarId`, `sewaDate`)"
+          }
+        ],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '5089a041115adfaec81961a6e003424f')"
+    ]
+  }
+}

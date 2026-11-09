@@ -16,8 +16,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -78,7 +78,13 @@ fun StatsScreen(vm: RegisterViewModel) {
 
     val compact = isCompactWidth()
 
-    Column(Modifier.fillMaxSize().background(Background).padding(16.dp)) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(Background)
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+    ) {
 
         val title: @Composable () -> Unit = {
             Text(
@@ -262,7 +268,7 @@ fun StatsScreen(vm: RegisterViewModel) {
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = Surface),
-            modifier = Modifier.fillMaxWidth().weight(1f),
+            modifier = Modifier.fillMaxWidth(),
         ) {
             when {
                 // One person: the days that make up their total, listed, so the
@@ -272,12 +278,10 @@ fun StatsScreen(vm: RegisterViewModel) {
                     if (state.rows.isEmpty()) {
                         EmptyState(state.loading)
                     } else {
-                        LazyColumn {
-                            items(state.rows.sortedBy { it.sewaDate }, key = { it.attendanceId }) { row ->
-                                SewadarDayRow(row)
-                            }
-                            item(key = "total") { SubjectTotal(subject.daysAttended, subject.hours) }
+                        state.rows.sortedBy { it.sewaDate }.forEach { row ->
+                            SewadarDayRow(row)
                         }
+                        SubjectTotal(subject.daysAttended, subject.hours)
                     }
                 }
 
@@ -286,16 +290,14 @@ fun StatsScreen(vm: RegisterViewModel) {
                     if (state.totals.isEmpty()) {
                         EmptyState(state.loading)
                     } else {
-                        LazyColumn {
-                            items(state.totals.sortedBy { it.name }, key = { it.sewadarId }) { TotalsRow(it) }
-                            item(key = "total") {
-                                SubjectTotal(
-                                    state.totals.sumOf { it.daysAttended },
-                                    totalHours,
-                                    label = "$departmentName total",
-                                )
-                            }
+                        state.totals.sortedBy { it.name }.forEach { stat ->
+                            TotalsRow(stat)
                         }
+                        SubjectTotal(
+                            state.totals.sumOf { it.daysAttended },
+                            totalHours,
+                            label = "$departmentName total",
+                        )
                     }
                 }
             }
@@ -389,22 +391,35 @@ private fun <T> FilterDropdown(
 private class PeriodOption(val label: String, val apply: (RegisterViewModel) -> Unit)
 
 /**
- * The current quarter and the seven before it, then the spans. Eight quarters
- * is two years of summaries, which is further back than anyone reprints.
+ * Concise reporting periods: monthly, quarterly, last year, etc. (8 options max).
  */
 @Composable
 private fun periodOptions(): List<PeriodOption> {
     val today = LocalDate.now()
     val current = Quarter.current()
+    val prevQuarterIndex = current.year * 4 + (current.quarter - 1) - 1
+    val prevQuarter = Quarter(prevQuarterIndex / 4, prevQuarterIndex % 4 + 1)
+    val prev2QuarterIndex = current.year * 4 + (current.quarter - 1) - 2
+    val prev2Quarter = Quarter(prev2QuarterIndex / 4, prev2QuarterIndex % 4 + 1)
+    val firstOfThisMonth = today.withDayOfMonth(1)
+    val firstOfLastMonth = firstOfThisMonth.minusMonths(1)
+    val lastOfLastMonth = firstOfThisMonth.minusDays(1)
 
-    val quarters = (0 until 8).map { back ->
-        val index = current.year * 4 + (current.quarter - 1) - back
-        Quarter(index / 4, index % 4 + 1)
-    }
-
-    return quarters.map { q -> PeriodOption(q.label) { vm -> vm.selectQuarter(q) } } + listOf(
+    return listOf(
         PeriodOption("This month") { vm ->
-            vm.selectRange("This month", today.withDayOfMonth(1), today)
+            vm.selectRange("This month", firstOfThisMonth, today)
+        },
+        PeriodOption("Last month") { vm ->
+            vm.selectRange("Last month", firstOfLastMonth, lastOfLastMonth)
+        },
+        PeriodOption(current.label) { vm ->
+            vm.selectQuarter(current)
+        },
+        PeriodOption(prevQuarter.label) { vm ->
+            vm.selectQuarter(prevQuarter)
+        },
+        PeriodOption(prev2Quarter.label) { vm ->
+            vm.selectQuarter(prev2Quarter)
         },
         PeriodOption("Last 6 months") { vm ->
             vm.selectRange("Last 6 months", today.minusMonths(6), today)
@@ -512,9 +527,13 @@ private fun SewadarDayRow(row: ExportRow) {
                 color = InkMuted,
             )
         }
-        Text(SewaDays.formatTime(row.arrivalAt), Modifier.weight(1f), fontSize = 15.sp, color = Ink)
+        val arrivalDisplay = SewaDays.formatTime(row.arrivalAt) + if (row.arrivalEdited) "*" else ""
+        val departureDisplay = if (row.departureAt != null) {
+            SewaDays.formatTime(row.departureAt) + if (row.departureEdited) "*" else ""
+        } else "--"
+        Text(arrivalDisplay, Modifier.weight(1f), fontSize = 15.sp, color = Ink)
         Text(
-            if (row.departureAt != null) SewaDays.formatTime(row.departureAt) else "--",
+            departureDisplay,
             Modifier.weight(1f),
             fontSize = 15.sp,
             color = if (row.departureAt != null) Ink else Amber,
@@ -644,7 +663,12 @@ private fun TotalsRow(stat: SewadarTotals) {
 
 @Composable
 private fun EmptyState(loading: Boolean) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 48.dp),
+        contentAlignment = Alignment.Center,
+    ) {
         Text(
             if (loading) "Working it out..." else "No sewa recorded in this range.",
             color = InkMuted,

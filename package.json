@@ -19,5 +19,8 @@
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
+  },
+  "dependencies": {
+    "lint": "^1.2.2"
   }
 }

@@ -71,8 +71,8 @@ object AttendanceExport {
                     XlsxWriter.Cell.Text(dayName(row.sewaDate)),
                     XlsxWriter.Cell.Text(row.departmentName ?: "--"),
                     XlsxWriter.Cell.Text(row.name),
-                    XlsxWriter.Cell.Text(SewaDays.formatTime(row.arrivalAt)),
-                    XlsxWriter.Cell.Text(SewaDays.formatTime(row.departureAt)),
+                    XlsxWriter.Cell.Text(SewaDays.formatTime(row.arrivalAt) + if (row.arrivalEdited) "*" else ""),
+                    XlsxWriter.Cell.Text(if (row.departureAt != null) SewaDays.formatTime(row.departureAt) + if (row.departureEdited) "*" else "" else "--"),
                     if (minutes != null) XlsxWriter.Cell.Number(round2(minutes / 60.0)) else XlsxWriter.Cell.Text("--"),
                     XlsxWriter.Cell.Text(if (edits.isEmpty()) "" else edits.joinToString(", ")),
                 )

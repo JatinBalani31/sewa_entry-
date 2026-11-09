@@ -14,23 +14,55 @@ import { recentSewaDays, dayName } from '../lib/sewaDays.js';
  */
 
 const DEPARTMENTS = [
-  { name: 'Accounts', code: 'ACC', description: 'Donations, receipts and daily cash reconciliation.' },
-  { name: 'BAV', code: 'BAV', description: 'Bal Aur Vidya — children and education sewa.' },
-  { name: 'Traffic', code: 'TRF', description: 'Parking marshalling and crowd flow at the gates.' },
-  { name: 'Luggage', code: 'LUG', description: 'Cloakroom, bag checking and safe custody.' },
-  { name: 'Mobile', code: 'MOB', description: 'Mobile phone deposit counter.' },
-  { name: 'Safai', code: 'SAF', description: 'Cleanliness of the hall, langar and premises.' },
-  { name: 'Transport', code: 'TRN', description: 'Bus coordination and shuttle duty.' },
-  { name: 'Langar', code: 'LNG', description: 'Kitchen, serving and washing sewa.' },
+  { name: 'Committee' },
+  { name: 'Safai Sewa Samiti' },
+  { name: 'Safai Group A' },
+  { name: 'Safai Group B' },
+  { name: 'Safai Group C' },
+  { name: 'Safai Group D' },
+  { name: 'Safai Group E' },
+  { name: 'Safai Group F' },
+  { name: 'Safai Group G' },
+  { name: 'Safai Group H' },
+  { name: 'Safai Group I' },
+  { name: 'Safai Group J' },
+  { name: 'Bouganvillea' },
+  { name: 'Account' },
+  { name: 'BAV' },
+  { name: 'Baal Satsang Sewadar' },
+  { name: 'Canteen' },
+  { name: 'Chhabeel' },
+  { name: 'Garden' },
+  { name: 'Luggage' },
+  { name: 'Lost & Found' },
+  { name: 'Morning Sewa' },
+  { name: 'Mobile' },
+  { name: 'Office' },
+  { name: 'Pathi' },
+  { name: 'Parking' },
+  { name: 'Purchase' },
+  { name: 'Pandal Gents' },
+  { name: 'Pandal Ladies' },
+  { name: 'Sound' },
+  { name: 'Stage' },
+  { name: 'Store' },
+  { name: 'Sewa Samiti' },
+  { name: 'Security Gents' },
+  { name: 'Security Ladies' },
+  { name: 'Satsang Reader' },
+  { name: 'Traffic' },
+  { name: 'Transport (Traffic 1)' },
+  { name: 'Transport Driver (Traffic 1)' },
+  { name: 'Wheel Chair' },
 ];
 
 const SEWADARS = [
   { id: 'ADM001', full_name: 'Priya Nair', phone: '9820011001', email: 'admin@sewa.local', role: 'ADMIN', pin: '4729', password: config.seedAdminPassword, department: null },
-  { id: 'ADM002', full_name: 'Rakesh Iyer', phone: '9820011002', email: 'rakesh@sewa.local', role: 'ADMIN', pin: '5183', password: 'sewa@admin2', department: 'Accounts' },
+  { id: 'ADM002', full_name: 'Rakesh Iyer', phone: '9820011002', email: 'rakesh@sewa.local', role: 'ADMIN', pin: '5183', password: 'sewa@admin2', department: 'Account' },
 
-  { id: 'SW1001', full_name: 'Harpreet Singh', phone: '9820022001', department: 'Accounts', hod: true },
-  { id: 'SW1002', full_name: 'Manjit Kaur', phone: '9820022002', department: 'Accounts' },
-  { id: 'SW1003', full_name: 'Vikram Sethi', phone: '9820022003', department: 'Accounts' },
+  { id: 'SW1001', full_name: 'Harpreet Singh', phone: '9820022001', department: 'Account', hod: true },
+  { id: 'SW1002', full_name: 'Manjit Kaur', phone: '9820022002', department: 'Account' },
+  { id: 'SW1003', full_name: 'Vikram Sethi', phone: '9820022003', department: 'Account' },
 
   { id: 'SW2001', full_name: 'Anita Desai', phone: '9820022004', department: 'BAV', hod: true },
   { id: 'SW2002', full_name: 'Rohan Mehta', phone: '9820022005', department: 'BAV' },
@@ -47,16 +79,16 @@ const SEWADARS = [
   { id: 'SW5001', full_name: 'Farah Khan', phone: '9820022013', department: 'Mobile', hod: true },
   { id: 'SW5002', full_name: 'Imran Shaikh', phone: '9820022014', department: 'Mobile' },
 
-  { id: 'SW6001', full_name: 'Lata Kamble', phone: '9820022015', department: 'Safai', hod: true },
-  { id: 'SW6002', full_name: 'Ramesh Gaikwad', phone: '9820022016', department: 'Safai' },
-  { id: 'SW6003', full_name: 'Shalini More', phone: '9820022017', department: 'Safai' },
+  { id: 'SW6001', full_name: 'Lata Kamble', phone: '9820022015', department: 'Safai Sewa Samiti', hod: true },
+  { id: 'SW6002', full_name: 'Ramesh Gaikwad', phone: '9820022016', department: 'Safai Sewa Samiti' },
+  { id: 'SW6003', full_name: 'Shalini More', phone: '9820022017', department: 'Safai Sewa Samiti' },
 
-  { id: 'SW7001', full_name: 'Jaspal Bedi', phone: '9820022018', department: 'Transport', hod: true },
-  { id: 'SW7002', full_name: 'Naveen Rao', phone: '9820022019', department: 'Transport' },
+  { id: 'SW7001', full_name: 'Jaspal Bedi', phone: '9820022018', department: 'Transport (Traffic 1)', hod: true },
+  { id: 'SW7002', full_name: 'Naveen Rao', phone: '9820022019', department: 'Transport (Traffic 1)' },
 
-  { id: 'SW8001', full_name: 'Simran Gill', phone: '9820022020', department: 'Langar', hod: true },
-  { id: 'SW8002', full_name: 'Pooja Verma', phone: '9820022021', department: 'Langar' },
-  { id: 'SW8003', full_name: 'Arun Nambiar', phone: '9820022022', department: 'Langar' },
+  { id: 'SW8001', full_name: 'Simran Gill', phone: '9820022020', department: 'Canteen', hod: true },
+  { id: 'SW8002', full_name: 'Pooja Verma', phone: '9820022021', department: 'Canteen' },
+  { id: 'SW8003', full_name: 'Arun Nambiar', phone: '9820022022', department: 'Canteen' },
 ];
 
 // A sewa day runs from mid-morning to late afternoon; individuals drift around
@@ -80,7 +112,7 @@ export async function seed({ quiet = false } = {}) {
     }
     const { rows } = await query(
       'INSERT INTO departments (name, code, description) VALUES ($1,$2,$3) RETURNING id',
-      [department.name, department.code, department.description],
+      [department.name, department.code || null, department.description || null],
     );
     departmentIds.set(department.name, rows[0].id);
     log(`  + department ${department.name}`);

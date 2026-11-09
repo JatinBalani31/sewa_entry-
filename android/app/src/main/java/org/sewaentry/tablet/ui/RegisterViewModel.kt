@@ -1,10 +1,12 @@
 package org.sewaentry.tablet.ui
 
 import android.app.Application
+import android.database.sqlite.SQLiteException
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -18,7 +20,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import org.sewaentry.tablet.data.AdminLock
+import org.sewaentry.tablet.data.PinAttemptResult
+import org.sewaentry.tablet.data.FullLocalBackup
 import org.sewaentry.tablet.data.BackupManager
+import org.sewaentry.tablet.data.BackupErrorMessages
 import org.sewaentry.tablet.data.DayFilter
 import org.sewaentry.tablet.data.DepartmentEntity
 import org.sewaentry.tablet.data.DepartmentGroup
@@ -31,6 +36,8 @@ import org.sewaentry.tablet.data.SewaRepository
 import org.sewaentry.tablet.data.SewadarTotals
 import org.sewaentry.tablet.data.SewadarWithStatus
 import org.sewaentry.tablet.export.AttendanceExport
+import org.sewaentry.tablet.export.RosterExport
+import org.sewaentry.tablet.export.XlsxWriter
 import org.sewaentry.tablet.roster.ImportPlan
 import org.sewaentry.tablet.roster.RosterImport
 import org.sewaentry.tablet.roster.XlsxReader
@@ -122,37 +129,62 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
         _message.value = null
     }
 
-    /** Live tap: the time is the device clock. Only offered on today. */
-    fun recordArrival(sewadarId: Long, signature: String) = viewModelScope.launch {
+    /** Manual live arrival: the time is the device clock. Star-marked as manual entry. */
+    fun recordArrival(sewadarId: Long) = viewModelScope.launch {
         repo.recordArrival(
             sewadarId = sewadarId,
             departmentId = _departmentId.value,
             date = _date.value,
             at = System.currentTimeMillis(),
-            signature = signature,
-        ).exceptionOrNull()?.let { _message.value = it.message }
+            signature = null,
+            edited = true,
+            method = "MANUAL",
+            adminId = null,
+            note = null,
+        ).fold(
+            onSuccess = { _message.value = "Arrival recorded." },
+            onFailure = { _message.value = it.message },
+        )
     }
 
-    fun recordDeparture(sewadarId: Long, signature: String) = viewModelScope.launch {
+    /** Manual live departure: the time is the device clock. Star-marked as manual entry. */
+    fun recordDeparture(sewadarId: Long) = viewModelScope.launch {
         repo.recordDeparture(
             sewadarId = sewadarId,
-            departmentId = _departmentId.value,
             date = _date.value,
             at = System.currentTimeMillis(),
-            signature = signature,
-        ).exceptionOrNull()?.let { _message.value = it.message }
+            signature = null,
+            edited = true,
+            method = "MANUAL",
+            adminId = null,
+            note = null,
+        ).fold(
+            onSuccess = { _message.value = "Departure recorded." },
+            onFailure = { _message.value = it.message },
+        )
     }
 
     /**
      * Manual entry. Sets the time by hand on the currently selected date, and
-     * flags the row as edited so the register and every export show it.
+     * flags the row as edited (star-marked) so the register and every export show it.
      */
-    fun manualSetTime(sewadarId: Long, arrival: Boolean, hour: Int, minute: Int) = viewModelScope.launch {
+    fun manualSetTime(
+        sewadarId: Long,
+        arrival: Boolean,
+        hour: Int,
+        minute: Int,
+    ) = viewModelScope.launch {
         val at = SewaDays.timeOnDate(_date.value, hour, minute)
         val result = if (arrival) {
-            repo.recordArrival(sewadarId, _departmentId.value, _date.value, at, signature = null, edited = true)
+            repo.recordArrival(
+                sewadarId, _departmentId.value, _date.value, at, signature = null, edited = true,
+                method = "MANUAL", adminId = null, note = null,
+            )
         } else {
-            repo.recordDeparture(sewadarId, _departmentId.value, _date.value, at, signature = null, edited = true)
+            repo.recordDeparture(
+                sewadarId, _date.value, at, signature = null, edited = true,
+                method = "MANUAL", adminId = null, note = null,
+            )
         }
         result.fold(
             onSuccess = { _message.value = "Time saved." },
@@ -160,15 +192,68 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    fun clearRecord(sewadarId: Long) = viewModelScope.launch {
-        repo.clear(sewadarId, _date.value)
-        _message.value = "Entry cleared."
+    fun clearRecord(sewadarId: Long, arrival: Boolean) = viewModelScope.launch {
+        repo.clear(sewadarId, _date.value, arrival = arrival).fold(
+            onSuccess = { _message.value = if (arrival) "Arrival cleared." else "Departure cleared." },
+            onFailure = { _message.value = it.message },
+        )
     }
 
-    fun addSewadar(name: String, phone: String?) = viewModelScope.launch {
+    fun addSewadar(name: String, phone: String?, organization: String? = null) = viewModelScope.launch {
         val dept = _departmentId.value ?: return@launch
         if (name.isBlank()) return@launch
-        repo.addSewadar(name, dept, phone)
+        repo.addSewadar(name, dept, phone, organization)
+        _message.value = "Sewadar '$name' added."
+    }
+
+    fun exportRoster(uri: Uri) = viewModelScope.launch {
+        val result = withContext(Dispatchers.IO) {
+            runCatching {
+                val database = SewaDatabase.get(getApplication<Application>())
+                val sheets = RosterExport.build(database.departments().all(), database.sewadars().all())
+                val output = getApplication<Application>().contentResolver.openOutputStream(uri)
+                    ?: throw IllegalStateException("Could not open the selected file location.")
+                output.use { XlsxWriter().write(it, sheets) }
+            }
+        }
+        result.fold(
+            onSuccess = { _message.value = "Roster Excel file exported with contact numbers." },
+            onFailure = { _message.value = "Roster export failed: ${it.message ?: "could not write the file"}" },
+        )
+    }
+
+    fun removeSewadar(sewadarId: Long) = viewModelScope.launch {
+        repo.removeSewadar(sewadarId)
+        _selectedSewadarId.value = null
+        _message.value = "Sewadar removed from the active roster. Their saved records were kept."
+    }
+
+    fun updateSewadarDetails(
+        sewadarId: Long,
+        name: String,
+        phone: String?,
+        organization: String?,
+        departmentId: Long,
+    ) = viewModelScope.launch {
+        try {
+            repo.updateSewadarDetails(sewadarId, name, phone, organization, departmentId)
+            _message.value = "Sewadar details updated."
+        } catch (error: IllegalArgumentException) {
+            _message.value = error.message ?: "Could not update sewadar details."
+        } catch (error: SQLiteException) {
+            _message.value = "Could not update sewadar details: ${error.message ?: "unknown error"}"
+        }
+    }
+
+    fun renameDepartment(departmentId: Long, name: String) = viewModelScope.launch {
+        try {
+            repo.renameDepartment(departmentId, name)
+            _message.value = "Department name updated."
+        } catch (error: IllegalArgumentException) {
+            _message.value = error.message ?: "Could not update department name."
+        } catch (error: SQLiteException) {
+            _message.value = "Could not update department name: ${error.message ?: "unknown error"}"
+        }
     }
 
     // --- Analytics ---------------------------------------------------------
@@ -290,28 +375,55 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _unlocked = MutableStateFlow(false)
     val unlocked: StateFlow<Boolean> = _unlocked.asStateFlow()
+    private val _lastAdminActivity = MutableStateFlow(0L)
+    val lastAdminActivity: StateFlow<Long> = _lastAdminActivity.asStateFlow()
 
-    /** False until someone sets a PIN — the first visit asks them to choose one. */
+    /** False until someone sets a PIN — all tabs remain gated until setup completes. */
     val pinConfigured: Boolean get() = lock.isConfigured
+    val pinMigrationRequired: Boolean get() = lock.requiresPinMigration
 
-    /** @return false if the PIN was wrong, so the screen can say so. */
-    fun unlock(pin: String): Boolean {
-        val ok = lock.check(pin)
-        if (ok) _unlocked.value = true
-        return ok
+    fun unlock(pin: String): PinAttemptResult {
+        val result = lock.verifyCurrentPin(pin)
+        if (result.accepted) {
+            _unlocked.value = true
+            _lastAdminActivity.value = System.currentTimeMillis()
+        }
+        return result
+    }
+
+    fun verifyCurrentPin(pin: String): PinAttemptResult =
+        lock.verifyCurrentPin(pin)
+
+    fun changePin(current: String, next: String): PinAttemptResult {
+        val result = if (lock.requiresPinMigration) {
+            lock.migratePin(current, next)
+        } else {
+            lock.changePin(current, next)
+        }
+        if (result.accepted) {
+            _unlocked.value = true
+            _lastAdminActivity.value = System.currentTimeMillis()
+        }
+        return result
     }
 
     fun setPin(pin: String): Boolean {
         val ok = lock.setPin(pin)
-        if (ok) _unlocked.value = true
+        if (ok) {
+            _unlocked.value = true
+            _lastAdminActivity.value = System.currentTimeMillis()
+        }
         return ok
     }
 
-    fun changePin(current: String, next: String): Boolean = lock.changePin(current, next)
+    fun markAdminActivity() {
+        if (_unlocked.value) _lastAdminActivity.value = System.currentTimeMillis()
+    }
 
     /** Locks the admin area again — used when the tablet goes back on the counter. */
     fun lockAdmin() {
         _unlocked.value = false
+        _lastAdminActivity.value = 0L
     }
 
     // --- Backup / Restore --------------------------------------------------
@@ -320,18 +432,36 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
     val backupBusy: StateFlow<Boolean> = _backupBusy.asStateFlow()
 
     /** Suggested file name for the "save as" dialog. */
-    val backupFileName: String get() = BackupManager.suggestedFileName()
+    val backupFileName: String get() = FullLocalBackup.suggestedFileName()
+    val databaseBackupFileName: String get() = BackupManager.suggestedFileName()
 
-    fun backupTo(uri: Uri) = viewModelScope.launch {
+    fun backupDatabaseTo(uri: Uri) = viewModelScope.launch {
         _backupBusy.value = true
-        val result = withContext(Dispatchers.IO) {
-            runCatching { BackupManager.backupTo(getApplication(), uri) }
-        }
+        val result = withContext(Dispatchers.IO) { runCatching { BackupManager.backupTo(getApplication(), uri) } }
         _backupBusy.value = false
-        result.fold(
-            onSuccess = { _message.value = "Backup saved. Store it on Google Drive or a safe location." },
-            onFailure = { _message.value = "Backup failed: ${it.message}" },
-        )
+        result.fold({ _message.value = "App data backup saved." }, { _message.value = "Backup failed: ${it.message}" })
+    }
+
+    fun restoreDatabaseFrom(uri: Uri) = viewModelScope.launch {
+        _backupBusy.value = true
+        val result = withContext(Dispatchers.IO) { runCatching { BackupManager.restoreFrom(getApplication(), uri) } }
+        _backupBusy.value = false
+        result.fold({ _message.value = "App data restored. Restarting…"; _needsRestart.value = true }, { _message.value = "Restore failed: ${it.message}" })
+    }
+
+    fun backupTo(uri: Uri, password: CharArray) = viewModelScope.launch {
+        _backupBusy.value = true
+        try {
+            withContext(Dispatchers.IO) { FullLocalBackup.backupTo(getApplication(), uri, password) }
+            _message.value = "Full backup saved with roster, attendance, and face entries. Keep the password safe."
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            _message.value = BackupErrorMessages.describe("Backup failed", error)
+        } finally {
+            password.fill('\u0000')
+            _backupBusy.value = false
+        }
     }
 
     /**
@@ -342,19 +472,20 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
     private val _needsRestart = MutableStateFlow(false)
     val needsRestart: StateFlow<Boolean> = _needsRestart.asStateFlow()
 
-    fun restoreFrom(uri: Uri) = viewModelScope.launch {
+    fun restoreFrom(uri: Uri, password: CharArray) = viewModelScope.launch {
         _backupBusy.value = true
-        val result = withContext(Dispatchers.IO) {
-            runCatching { BackupManager.restoreFrom(getApplication(), uri) }
+        try {
+            _message.value = withContext(Dispatchers.IO) {
+                FullLocalBackup.restoreFrom(getApplication(), uri, password)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            _message.value = BackupErrorMessages.describe("Backup import failed", error)
+        } finally {
+            password.fill('\u0000')
+            _backupBusy.value = false
         }
-        _backupBusy.value = false
-        result.fold(
-            onSuccess = {
-                _message.value = "Database restored. Restarting…"
-                _needsRestart.value = true
-            },
-            onFailure = { _message.value = "Restore failed: ${it.message}" },
-        )
     }
 
     // --- Roster import -----------------------------------------------------
@@ -416,8 +547,7 @@ class RegisterViewModel(app: Application) : AndroidViewModel(app) {
         }
         result.fold(
             onSuccess = {
-                _import.value = ImportUiState()
-                _message.value = "Roster imported - ${it.summary}"
+                _import.value = ImportUiState(completedSummary = "Roster imported - ${it.summary}")
             },
             onFailure = {
                 _import.value = state.copy(applying = false, error = it.message ?: "Import failed.")
@@ -473,6 +603,7 @@ data class ImportUiState(
     val loading: Boolean = false,
     val applying: Boolean = false,
     val error: String? = null,
+    val completedSummary: String? = null,
 ) {
     val isOpen: Boolean get() = plan != null || loading || error != null
 }

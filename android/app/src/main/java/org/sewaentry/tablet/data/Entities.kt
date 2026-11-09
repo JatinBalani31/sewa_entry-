@@ -50,14 +50,15 @@ data class SewadarEntity(
     /** The contact sheet carries up to two numbers per sewadar. */
     @ColumnInfo(defaultValue = "NULL")
     val phone2: String? = null,
-    /**
-     * Head of department — taken from the bold names in the sangat's contact
-     * sheet, where bold is how the HOD has always been marked. Carries no
-     * privileges today; it is recorded so the register can show who leads a
-     * team without anyone having to remember.
-     */
+    @ColumnInfo(defaultValue = "NULL")
+    val organization: String? = null,
+    /** Retained for schema compatibility; migration 7-8 moves this marker into organization. */
     @ColumnInfo(defaultValue = "0")
+    @Deprecated("HOD status is represented as organization text.")
     val isHod: Boolean = false,
+    @ColumnInfo(defaultValue = "NULL")
+    @Deprecated("Sewadar-level PINs are no longer used.")
+    val pinHash: String? = null,
     val isActive: Boolean = true,
 )
 
@@ -71,8 +72,8 @@ data class SewadarEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    // One row per sewadar per sewa day: a sewa day has one arrival and one
-    // departure, so the register's shape and the table's shape are the same.
+    // A compatibility summary row per sewadar/day. Every attendance transition
+    // is also retained in attendance_logs.
     indices = [
         Index(value = ["sewadarId", "sewaDate"], unique = true),
         Index("sewaDate"),
@@ -89,6 +90,13 @@ data class AttendanceEntity(
     val arrivalAt: Long? = null,
     val departureAt: Long? = null,
 
+    val arrivalMethod: String? = null,
+    val departureMethod: String? = null,
+    val arrivalAdminId: String? = null,
+    val departureAdminId: String? = null,
+    val arrivalNote: String? = null,
+    val departureNote: String? = null,
+
     /** Base64 PNG of the hand-drawn signature, captured at the counter. */
     val arrivalSignature: String? = null,
     val departureSignature: String? = null,
@@ -101,10 +109,85 @@ data class AttendanceEntity(
     val arrivalEdited: Boolean = false,
     val departureEdited: Boolean = false,
 
+    val arrivalLogId: Long? = null,
+    val departureLogId: Long? = null,
+
     @ColumnInfo(defaultValue = "NULL")
     val note: String? = null,
 
     val updatedAt: Long = System.currentTimeMillis(),
+)
+
+@Entity(
+    tableName = "attendance_override_audit",
+    indices = [Index(value = ["sewadarId", "sewaDate"])],
+)
+data class AttendanceOverrideAuditEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sewadarId: Long,
+    val sewaDate: String,
+    val action: String,
+    val adminId: String,
+    val note: String,
+    val occurredAt: Long = System.currentTimeMillis(),
+)
+
+@Entity(
+    tableName = "attendance_logs",
+    foreignKeys = [
+        ForeignKey(
+            entity = SewadarEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sewadarId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index(value = ["clientLogId"], unique = true),
+        Index(value = ["sewadarId", "sewaDate", "id"]),
+        Index(value = ["sewadarId", "verificationMethod", "id"]),
+    ],
+)
+data class AttendanceLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val clientLogId: String,
+    val sewadarId: Long,
+    val sewaDate: String,
+    val departmentId: Long?,
+    val eventType: String,
+    val verificationMethod: String,
+    val deviceTime: Long,
+    val signature: String? = null,
+    val matchScore: Float? = null,
+    val livenessPassed: Boolean? = null,
+    val adminOverride: Boolean = false,
+    val adminId: String? = null,
+    val note: String? = null,
+    val syncedAt: Long? = null,
+)
+
+@Entity(
+    tableName = "face_templates",
+    foreignKeys = [
+        ForeignKey(
+            entity = SewadarEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sewadarId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["sewadarId", "sampleIndex"], unique = true)],
+)
+data class FaceTemplateEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sewadarId: Long,
+    val sampleIndex: Int,
+    val modelVersion: String,
+    val ivBase64: String,
+    val encryptedEmbeddingBase64: String,
+    val consentVersion: String,
+    val consentAt: Long,
+    val enrolledAt: Long,
 )
 
 /** A sewadar joined with their department name — what the register grid renders. */
@@ -113,7 +196,8 @@ data class SewadarWithStatus(
     val name: String,
     val departmentId: Long?,
     val departmentName: String?,
-    val isHod: Boolean,
+    val phone: String?,
+    val organization: String?,
     val attendanceId: Long?,
     val arrivalAt: Long?,
     val departureAt: Long?,
@@ -130,4 +214,15 @@ data class SewadarStats(
     val daysComplete: Int,
     val totalMinutes: Long,
     val lastAttendedDate: String?,
+)
+
+data class FaceTemplateCount(
+    val sewadarId: Long,
+    val templateCount: Int,
+)
+
+data class ActiveFaceTemplate(
+    @androidx.room.Embedded val template: FaceTemplateEntity,
+    val sewadarName: String,
+    val departmentId: Long?,
 )

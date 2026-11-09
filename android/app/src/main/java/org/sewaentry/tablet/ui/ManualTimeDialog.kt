@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -60,9 +61,8 @@ import java.time.LocalDate
 /**
  * Manual time entry — the only path that sets a time by hand.
  *
- * Two two-digit boxes rather than a free-text field: on a tablet an admin is
- * working through a stack of people, so the hour box takes focus immediately,
- * jumps to minutes the moment two digits are in, and every value can also be
+ * Two two-digit boxes rather than a free-text field: either box can be tapped
+ * to type, a completed hour jumps to minutes, and every value can also be
  * nudged with big +/- buttons without opening the keyboard at all.
  *
  * Anything saved here is flagged as edited, in the register and in the export.
@@ -74,20 +74,22 @@ fun ManualTimeDialog(
     isToday: Boolean,
     onDismiss: () -> Unit,
     onSet: (arrival: Boolean, hour: Int, minute: Int) -> Unit,
-    onClear: () -> Unit,
+    onClear: (arrival: Boolean) -> Unit,
 ) {
+    val compactWidth = isCompactWidth()
+    var pendingClear by remember { mutableStateOf(false) }
+
     // Open on whichever end still needs filling in.
     var editingArrival by remember { mutableStateOf(sewadar.arrivalAt == null || sewadar.departureAt != null) }
 
     val existing = if (editingArrival) sewadar.arrivalAt else sewadar.departureAt
 
-    // Sensible starting values so the common case is a couple of taps: the
-    // recorded time if there is one, otherwise a typical sewa start/end.
+    // Default arrival time: 7:00 AM, default departure time: 14c:00 PM (2:00 PM).
     val default = remember(editingArrival, existing) {
         when {
             existing != null -> SewaDays.formatTime(existing).split(":").let { it[0].toInt() to it[1].toInt() }
-            editingArrival -> 9 to 30
-            else -> 16 to 30
+            editingArrival -> 7 to 0
+            else -> 14 to 0
         }
     }
 
@@ -97,7 +99,36 @@ fun ManualTimeDialog(
     val arrivalMissing = !editingArrival && sewadar.arrivalAt == null
     val canSave = !arrivalMissing
 
-    Dialog(
+    if (pendingClear) {
+        val clearingArrival = editingArrival
+        val currentTime = if (clearingArrival) sewadar.arrivalAt else sewadar.departureAt
+        AlertDialog(
+            onDismissRequest = { pendingClear = false },
+            title = { Text("Clear ${if (clearingArrival) "arrival" else "departure"} entry?") },
+            text = {
+                Text(
+                    "This will clear ${if (clearingArrival) "the arrival" else "the departure"} " +
+                        "for ${sewadar.name} on ${SewaDays.format(date)}" +
+                        "${currentTime?.let { " (${SewaDays.formatTime(it)})" } ?: ""}. " +
+                        "This cannot be undone from this screen.",
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingClear = false
+                        onClear(clearingArrival)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = DepartureRed),
+                ) { Text("Clear entry") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingClear = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (!pendingClear) Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
@@ -158,25 +189,50 @@ fun ManualTimeDialog(
 
                 Spacer(Modifier.height(24.dp))
 
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    if (sewadar.arrivalAt != null) {
-                        TextButton(onClick = onClear) {
-                            Text("Clear entry", color = DepartureRed, fontSize = 15.sp)
-                        }
-                    }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = onDismiss, modifier = Modifier.height(56.dp)) {
-                        Text("Cancel", color = InkMuted, fontSize = 16.sp)
-                    }
-                    Spacer(Modifier.width(10.dp))
+                val showClear = (editingArrival && sewadar.arrivalAt != null) ||
+                    (!editingArrival && sewadar.departureAt != null)
+                val saveTime: @Composable (Modifier) -> Unit = { modifier ->
                     Button(
                         onClick = { onSet(editingArrival, hour, minute) },
                         enabled = canSave,
                         shape = RoundedCornerShape(14.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Navy),
-                        modifier = Modifier.height(56.dp).width(180.dp),
+                        modifier = modifier.height(56.dp),
                     ) {
                         Text("Save time", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                if (compactWidth) {
+                    Column(Modifier.fillMaxWidth()) {
+                        if (showClear) {
+                            TextButton(onClick = { pendingClear = true }) {
+                                Text("Clear entry", color = DepartureRed, fontSize = 15.sp)
+                            }
+                        }
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(onClick = onDismiss, modifier = Modifier.height(56.dp)) {
+                                Text("Cancel", color = InkMuted, fontSize = 16.sp)
+                            }
+                            Spacer(Modifier.weight(1f))
+                            saveTime(Modifier.width(150.dp))
+                        }
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        if (showClear) {
+                            TextButton(onClick = { pendingClear = true }) {
+                                Text("Clear entry", color = DepartureRed, fontSize = 15.sp)
+                            }
+                        }
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = onDismiss, modifier = Modifier.height(56.dp)) {
+                            Text("Cancel", color = InkMuted, fontSize = 16.sp)
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        saveTime(Modifier.width(180.dp))
                     }
                 }
             }
@@ -215,8 +271,6 @@ private fun TimeSpinner(
 ) {
     val minuteFocus = remember { FocusRequester() }
     val hourFocus = remember { FocusRequester() }
-
-    LaunchedEffect(Unit) { hourFocus.requestFocusIfAttached() }
 
     Row(
         Modifier.fillMaxWidth(),
@@ -284,7 +338,7 @@ private fun DigitBox(
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         StepButton(icon = true, accent = accent) {
             midEdit = false
-            onValueChange(if (value >= max) 0 else value + 1)
+            onValueChange(if (label == "MINUTE") nextFiveMinuteValue(value) else if (value >= max) 0 else value + 1)
         }
 
         Spacer(Modifier.height(10.dp))
@@ -359,10 +413,15 @@ private fun DigitBox(
 
         StepButton(icon = false, accent = accent) {
             midEdit = false
-            onValueChange(if (value <= 0) max else value - 1)
+            onValueChange(if (label == "MINUTE") previousFiveMinuteValue(value) else if (value <= 0) max else value - 1)
         }
     }
 }
+
+internal fun nextFiveMinuteValue(value: Int): Int = (((value.coerceIn(0, 59) / 5) + 1) * 5) % 60
+
+internal fun previousFiveMinuteValue(value: Int): Int =
+    if (value <= 0) 55 else ((value.coerceAtMost(59) - 1) / 5) * 5
 
 @Composable
 private fun StepButton(icon: Boolean, accent: Color, onClick: () -> Unit) {

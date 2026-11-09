@@ -11,7 +11,7 @@ import { publicSewadar } from './auth.js';
 export const sewadarsRouter = Router();
 
 const SELECT = `
-  SELECT s.id, s.full_name, s.phone, s.email, s.role, s.department_id, s.is_active,
+  SELECT s.id, s.full_name, s.phone, s.organization, s.email, s.role, s.department_id, s.is_active,
          s.joined_on, s.created_at, s.failed_pin_attempts, s.pin_locked_until,
          (s.password_hash IS NOT NULL) AS has_password,
          d.name AS department_name
@@ -31,7 +31,8 @@ sewadarsRouter.get(
     if (search) {
       params.push(`%${search}%`);
       where.push(`(LOWER(s.full_name) LIKE $${params.length} OR LOWER(s.id) LIKE $${params.length}
-                   OR LOWER(s.email) LIKE $${params.length} OR s.phone LIKE $${params.length})`);
+                   OR LOWER(s.email) LIKE $${params.length} OR s.phone LIKE $${params.length}
+                   OR LOWER(s.organization) LIKE $${params.length})`);
     }
     if (departmentId === 'none') {
       where.push('s.department_id IS NULL');
@@ -61,6 +62,7 @@ const createSchema = z.object({
   full_name: z.string({ required_error: 'Full name is required.' })
     .trim().min(1, 'Full name is required.').max(100),
   phone: z.string().trim().max(20).nullable().optional(),
+  organization: z.string().trim().max(100).nullable().optional(),
   email: z.string().trim().email('Enter a valid email address.').max(100).nullable().optional()
     .or(z.literal('')),
   department_id: z.coerce.number().int().positive().nullable().optional(),
@@ -93,11 +95,11 @@ sewadarsRouter.post(
     }
 
     await query(
-      `INSERT INTO sewadars (id, full_name, phone, email, department_id, role,
+      `INSERT INTO sewadars (id, full_name, phone, organization, email, department_id, role,
                              secret_pin_hash, password_hash, joined_on, is_active)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
-        body.id.trim(), body.full_name, body.phone || null, body.email || null,
+        body.id.trim(), body.full_name, body.phone || null, body.organization || null, body.email || null,
         body.department_id ?? null, body.role, await hashSecret(pin),
         password ? await hashSecret(password) : null,
         body.joined_on || null, body.is_active,
@@ -111,6 +113,7 @@ sewadarsRouter.post(
 const updateSchema = z.object({
   full_name: z.string().trim().min(1).max(100).optional(),
   phone: z.string().trim().max(20).nullable().optional(),
+  organization: z.string().trim().max(100).nullable().optional(),
   email: z.string().trim().email('Enter a valid email address.').max(100).nullable().optional()
     .or(z.literal('')),
   department_id: z.coerce.number().int().positive().nullable().optional(),

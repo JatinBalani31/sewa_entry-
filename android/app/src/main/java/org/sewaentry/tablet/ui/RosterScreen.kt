@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,30 +38,59 @@ import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.sewaentry.tablet.roster.ParsedSheet
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 @Composable
-fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
+fun RosterScreen(
+    vm: RegisterViewModel,
+    onRestoreComplete: () -> Unit = {},
+    onImportComplete: (String) -> Unit = {},
+) {
     val state by vm.importState.collectAsState()
     val departments by vm.departments.collectAsState()
     val backupBusy by vm.backupBusy.collectAsState()
     val needsRestart by vm.needsRestart.collectAsState()
-    var showPinSetup by remember { mutableStateOf(false) }
+    var backupPassword by remember { mutableStateOf("") }
+    var showBackupDialog by remember { mutableStateOf(false) }
+    var restorePassword by remember { mutableStateOf("") }
+    var pendingRestoreUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var faceTransferPassword by remember { mutableStateOf("") }
+    var showFaceExportDialog by remember { mutableStateOf(false) }
+    var pendingFaceImportUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var faceTransferBusy by remember { mutableStateOf(false) }
+    val faceVm: FaceEnrollmentViewModel = viewModel()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(state.completedSummary) {
+        state.completedSummary?.let { summary ->
+            vm.clearImport()
+            onImportComplete(summary)
+        }
+    }
 
     if (needsRestart) {
         onRestoreComplete()
@@ -73,58 +103,213 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
 
     val backupLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream"),
-    ) { uri -> uri?.let { vm.backupTo(it) } }
-
-    var pendingRestoreUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    ) { uri ->
+        if (uri != null) vm.backupTo(uri, backupPassword.toCharArray())
+        backupPassword = ""
+    }
+    val rosterExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    ) { uri -> uri?.let(vm::exportRoster) }
+    val faceExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val password = faceTransferPassword.toCharArray()
+        faceTransferPassword = ""
+        if (uri != null) scope.launch {
+            faceTransferBusy = true
+            try {
+                val export = faceVm.createFaceBackup(password)
+                context.contentResolver.openOutputStream(uri)?.use {
+                    it.write(export.contents.toByteArray(Charsets.UTF_8))
+                } ?: error("Could not write the selected file.")
+                faceVm.reportTransfer(
+                    "Encrypted face backup saved: ${export.memberCount} member(s), ${export.sampleCount} template(s).",
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                faceVm.reportTransfer("Face export failed: ${error.message ?: "could not create the backup"}")
+            } finally {
+                password.fill('\u0000')
+                faceTransferBusy = false
+            }
+        } else {
+            password.fill('\u0000')
+        }
+    }
+    val faceImportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) pendingFaceImportUri = uri
+    }
 
     val restoreLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument(),
     ) { uri -> uri?.let { pendingRestoreUri = it } }
+    if (showFaceExportDialog) {
+        AlertDialog(
+            onDismissRequest = { showFaceExportDialog = false; faceTransferPassword = "" },
+            title = { Text("Export enrolled face data", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("This creates an encrypted file containing enrolled face templates. Use the same password when importing it on the other tablet. Keep the password separate from the file.")
+                    OutlinedTextField(
+                        value = faceTransferPassword,
+                        onValueChange = { faceTransferPassword = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        label = { Text("Transfer password (10+ characters)") },
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showFaceExportDialog = false
+                        faceExportLauncher.launch("sewa-face-backup.sewaface")
+                    },
+                    enabled = faceTransferPassword.length >= 10 && !faceTransferBusy,
+                ) { Text("Choose export location") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showFaceExportDialog = false; faceTransferPassword = "" }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
 
-    if (showPinSetup) {
-        Box(
-            Modifier.fillMaxSize().background(Background),
-            contentAlignment = Alignment.Center,
-        ) {
-            AdminGate(
-                configured = vm.pinConfigured,
-                onUnlock = { pin -> vm.unlock(pin).also { if (it) showPinSetup = false } },
-                onSetPin = { pin -> vm.setPin(pin).also { if (it) showPinSetup = false } },
-            )
-        }
-        return
+    pendingFaceImportUri?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { pendingFaceImportUri = null; faceTransferPassword = "" },
+            title = { Text("Import enrolled face data", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Import the roster first. Enter the export password; older unprotected face files can be imported with a blank password.")
+                    OutlinedTextField(
+                        value = faceTransferPassword,
+                        onValueChange = { faceTransferPassword = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        label = { Text("Transfer password") },
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingFaceImportUri = null
+                        val password = faceTransferPassword.toCharArray()
+                        faceTransferPassword = ""
+                        faceTransferBusy = true
+                        scope.launch {
+                            try {
+                                val contents = context.contentResolver.openInputStream(uri)
+                                    ?.bufferedReader()?.use { it.readText() }
+                                    ?: error("Could not read the selected file.")
+                                faceVm.reportTransfer(faceVm.importFaceBackup(contents, password))
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                faceVm.reportTransfer("Face import failed: ${error.message ?: "could not import the backup"}")
+                            } finally {
+                                password.fill('\u0000')
+                                faceTransferBusy = false
+                            }
+                        }
+                    },
+                    enabled = !faceTransferBusy,
+                ) { Text("Import face data") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingFaceImportUri = null; faceTransferPassword = "" }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 
     if (pendingRestoreUri != null) {
         AlertDialog(
-            onDismissRequest = { pendingRestoreUri = null },
-            title = { Text("Restore from backup?", fontWeight = FontWeight.Bold) },
+            onDismissRequest = { pendingRestoreUri = null; restorePassword = "" },
+            title = { Text("Import full backup?", fontWeight = FontWeight.Bold) },
             text = {
-                Text(
-                    "This replaces everything on the tablet — all departments, sewadars and " +
-                        "attendance records — with whatever is in the backup file. The app " +
-                        "will restart afterwards.\n\nThis cannot be undone.",
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Select the password-protected .sewabackup file created by Backup, then enter the same password used on the other tablet. " +
+                            "Excel files, face-only files, and scheduled Google Drive backups are not full backups. " +
+                            "Roster, attendance, and face templates are merged; local data is kept.",
+                    )
+                    OutlinedTextField(
+                        value = restorePassword,
+                        onValueChange = { restorePassword = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        label = { Text("Backup password (leave blank for older .db backups)") },
+                    )
+                }
             },
             confirmButton = {
                 Button(
                     onClick = {
                         val uri = pendingRestoreUri!!
                         pendingRestoreUri = null
-                        vm.restoreFrom(uri)
+                        vm.restoreFrom(uri, restorePassword.toCharArray())
+                        restorePassword = ""
                     },
+                    enabled = restorePassword.length >= 10 || restorePassword.isEmpty(),
                     colors = ButtonDefaults.buttonColors(containerColor = DepartureRed),
-                ) { Text("Restore", fontWeight = FontWeight.Bold) }
+                ) { Text("Import backup", fontWeight = FontWeight.Bold) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingRestoreUri = null }) { Text("Cancel") }
+                TextButton(onClick = { pendingRestoreUri = null; restorePassword = "" }) { Text("Cancel") }
             },
         )
     }
 
+    if (showBackupDialog) {
+        AlertDialog(
+            onDismissRequest = { showBackupDialog = false; backupPassword = "" },
+            title = { Text("Create full local backup", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "This password encrypts the roster, attendance, and face entries in one .sewabackup file. " +
+                            "Use the same password when importing it on another tablet. Keep the password separate from the file.",
+                    )
+                    OutlinedTextField(
+                        value = backupPassword,
+                        onValueChange = { backupPassword = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        label = { Text("Backup password (10+ characters)") },
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showBackupDialog = false; backupLauncher.launch(vm.backupFileName) },
+                    enabled = backupPassword.length >= 10 && !backupBusy,
+                ) { Text("Choose backup location") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBackupDialog = false; backupPassword = "" }) { Text("Cancel") }
+            },
+        )
+    }
+    if (state.plan != null) {
+        ImportPreview(vm)
+        return
+    }
+
     val compact = isCompactWidth()
 
-    Column(Modifier.fillMaxSize().background(Background).padding(16.dp)) {
+    Column(
+        Modifier.fillMaxSize()
+            .background(Background)
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+    ) {
 
         Column(Modifier.padding(bottom = 4.dp)) {
             Text("Roster", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Ink)
@@ -135,7 +320,24 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
             )
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(18.dp))
+
+        Text("Face data import / export", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Text("Roster Excel files do not contain face enrollments. Export and import this encrypted face-data file separately after transferring the roster.", fontSize = 12.sp, color = InkMuted)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { faceTransferPassword = ""; showFaceExportDialog = true }, enabled = !backupBusy && !faceTransferBusy, modifier = Modifier.weight(1f).height(48.dp)) { Text("Export face data") }
+            OutlinedButton(onClick = { faceTransferPassword = ""; faceImportLauncher.launch(arrayOf("*/*")) }, enabled = !backupBusy && !faceTransferBusy, modifier = Modifier.weight(1f).height(48.dp)) { Text("Import face data") }
+        }
+        Text("Import matches by department and name, with contact number used to resolve changed or duplicate names. Newer local face enrollments are preserved; the result reports verified, unmatched, and ambiguous entries.", fontSize = 12.sp, color = InkMuted)
+        faceVm.uiState.collectAsState().value.transferMessage?.let { Text(it, fontSize = 12.sp, color = InkMuted) }
+        Spacer(Modifier.height(18.dp))
+        Text("Full backup & restore", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Text(
+            "Use Backup and Restore to transfer roster, attendance, and face templates together. " +
+                "Scheduled Google Drive backups do not include face templates.",
+            fontSize = 12.sp,
+            color = InkMuted,
+        )
 
         val restoreButton: @Composable (Modifier) -> Unit = { mod ->
             OutlinedButton(
@@ -152,7 +354,7 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
 
         val backupButton: @Composable (Modifier) -> Unit = { mod ->
             OutlinedButton(
-                onClick = { backupLauncher.launch(vm.backupFileName) },
+                onClick = { backupPassword = ""; showBackupDialog = true },
                 enabled = !backupBusy,
                 shape = RoundedCornerShape(14.dp),
                 modifier = mod.height(52.dp),
@@ -166,7 +368,6 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
                 Text("Backup", fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1)
             }
         }
-
         val importButton: @Composable (Modifier) -> Unit = { mod ->
             Button(
                 onClick = { picker.launch(arrayOf("*/*")) },
@@ -177,10 +378,28 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
                 Icon(Icons.Filled.UploadFile, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "Import from Excel",
+                    "Import Excel",
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
                     maxLines = 1,
+                )
+            }
+        }
+        val exportRosterButton: @Composable (Modifier) -> Unit = { mod ->
+            OutlinedButton(
+                onClick = { rosterExportLauncher.launch("sewa-roster.xlsx") },
+                enabled = !backupBusy,
+                shape = RoundedCornerShape(14.dp),
+                modifier = mod.height(58.dp),
+            ) {
+                Icon(Icons.Filled.Backup, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Export Excel (with header)",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -195,7 +414,10 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
                     backupButton(Modifier.weight(1f))
                 }
                 Spacer(Modifier.height(10.dp))
-                importButton(Modifier.fillMaxWidth())
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    importButton(Modifier.weight(1f))
+                    exportRosterButton(Modifier.weight(1f))
+                }
             }
         } else {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -203,11 +425,24 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
                 Spacer(Modifier.width(10.dp))
                 backupButton(Modifier)
                 Spacer(Modifier.width(10.dp))
-                importButton(Modifier.width(240.dp))
+                importButton(Modifier.width(230.dp))
+                Spacer(Modifier.width(10.dp))
+                exportRosterButton(Modifier.width(190.dp))
             }
         }
 
         Spacer(Modifier.height(16.dp))
+        Text("Restore merges data into this tablet; local data is never replaced.", fontSize = 12.sp, color = InkMuted)
+        if (backupBusy) {
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                CircularProgressIndicator(color = Navy, modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
+                Text("Backup or restore is in progress. Please keep the app open.", color = InkMuted)
+            }
+        }
 
         when {
             state.loading -> Centered { CircularProgressIndicator(color = Navy) }
@@ -222,64 +457,14 @@ fun RosterScreen(vm: RegisterViewModel, onRestoreComplete: () -> Unit = {}) {
                 }
             }
 
-            state.plan != null -> ImportPreview(vm)
-
-            else -> Explainer(
-                showPinPrompt = !vm.pinConfigured && departments.isNotEmpty(),
-                onSetPin = { showPinSetup = true },
-            )
+            else -> Explainer()
         }
     }
 }
 
 @Composable
-private fun Explainer(showPinPrompt: Boolean = false, onSetPin: () -> Unit = {}) {
-    LazyColumn {
-        if (showPinPrompt) {
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = AmberBg),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        Modifier.padding(20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.Filled.Warning, null, tint = Amber, modifier = Modifier.size(24.dp))
-                        Spacer(Modifier.width(14.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "No admin PIN set",
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Ink,
-                            )
-                            Text(
-                                "Anyone can access the Summary and Roster tabs. " +
-                                    "Set a 4-digit PIN to protect them.",
-                                fontSize = 14.sp,
-                                color = InkMuted,
-                            )
-                        }
-                        Spacer(Modifier.width(14.dp))
-                        Button(
-                            onClick = onSetPin,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Navy),
-                            modifier = Modifier.height(48.dp),
-                        ) {
-                            Icon(Icons.Filled.Lock, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Set PIN", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-                Spacer(Modifier.height(16.dp))
-            }
-        }
-
-        item {
+private fun Explainer() {
+    Column {
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Surface),
@@ -314,11 +499,8 @@ private fun Explainer(showPinPrompt: Boolean = false, onSetPin: () -> Unit = {})
                     }
                 }
             }
-        }
+        Spacer(Modifier.height(16.dp))
 
-        item { Spacer(Modifier.height(16.dp)) }
-
-        item {
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Surface),
@@ -328,17 +510,16 @@ private fun Explainer(showPinPrompt: Boolean = false, onSetPin: () -> Unit = {})
                     Text("Backup & Restore", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink)
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "Back up the entire database — all departments, sewadars and attendance " +
-                            "records — to Google Drive or any other location. If the tablet is " +
-                            "lost or replaced, restore from the backup on the new device.",
+                        "Create a password-protected local file containing the roster, attendance entries, and face templates. " +
+                            "Restore merges data into this tablet; local data is never replaced.",
                         fontSize = 15.sp,
                         color = InkMuted,
                     )
                     Spacer(Modifier.height(12.dp))
                     listOf(
-                        "Tap Backup → pick Google Drive (or any folder) → the file is saved.",
-                        "Tap Restore → pick a backup file → confirm → the tablet is restored.",
-                        "Back up regularly so no recorded sewa is ever lost.",
+                        "Tap Backup, set a password of at least 10 characters, and choose a local or external file location.",
+                        "Tap Restore, choose the .sewabackup file, enter its password, and confirm.",
+                        "Keep the file and password in separate safe places. Back up regularly.",
                     ).forEach { line ->
                         Row(Modifier.padding(bottom = 8.dp)) {
                             Icon(
@@ -349,7 +530,6 @@ private fun Explainer(showPinPrompt: Boolean = false, onSetPin: () -> Unit = {})
                             )
                             Spacer(Modifier.width(10.dp))
                             Text(line, fontSize = 14.sp, color = Ink)
-                        }
                     }
                 }
             }
@@ -369,7 +549,11 @@ private fun ImportPreview(vm: RegisterViewModel) {
     val hods = plan.hodCount(selection)
     val missingHod = plan.withoutHod(selection)
 
-    Column(Modifier.fillMaxSize()) {
+    Column(
+        Modifier.fillMaxSize()
+            .background(Background)
+            .padding(if (compact) 16.dp else 24.dp),
+    ) {
 
         // Everything above the action bar scrolls as one list. The tiles and
         // the notices used to sit outside the scroll, and with a real workbook
@@ -436,7 +620,7 @@ private fun ImportPreview(vm: RegisterViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Column {
-                        plan.sheets.forEach { sheet ->
+                        plan.sheets.sortedBy { it.department.lowercase() }.forEach { sheet ->
                             SheetRow(
                                 sheet = sheet,
                                 checked = sheet.sheet in selection,

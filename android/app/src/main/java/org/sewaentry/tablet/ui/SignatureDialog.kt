@@ -9,6 +9,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,14 +17,18 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -41,6 +46,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -67,7 +73,7 @@ fun SignatureDialog(
     subtitle: String,
     accent: Color,
     onDismiss: () -> Unit,
-    onConfirm: (signatureBase64: String) -> Unit,
+    onConfirm: (signatureBase64: String, adminId: String, note: String) -> Unit,
 ) {
     val strokes = remember { mutableStateListOf<Stroke2D>() }
     var canvasWidth by remember { mutableStateOf(0) }
@@ -75,6 +81,11 @@ fun SignatureDialog(
     // Compose does not recompose on mutations inside a nested list, so this
     // counter is what tells the Canvas a point was appended.
     var revision by remember { mutableStateOf(0) }
+    var adminId by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    val configuration = LocalConfiguration.current
+    val compactWidth = configuration.screenWidthDp < 600
+    val canvasHeightDp = (configuration.screenHeightDp - 420).coerceIn(160, 260).dp
 
     val hasInk = strokes.any { it.points.size > 1 }
 
@@ -83,20 +94,39 @@ fun SignatureDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false),
     ) {
         Card(
-            modifier = Modifier.fillMaxWidth(0.96f).widthIn(max = 760.dp).padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth(0.96f)
+                .widthIn(max = 760.dp)
+                .heightIn(max = (configuration.screenHeightDp - 32).coerceAtLeast(160).dp)
+                .padding(16.dp),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = Surface),
         ) {
-            Column(Modifier.padding(20.dp)) {
+            Column(Modifier.padding(20.dp).verticalScroll(rememberScrollState())) {
                 Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Ink)
                 Spacer(Modifier.height(4.dp))
                 Text(subtitle, fontSize = 14.sp, color = InkMuted)
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = adminId,
+                    onValueChange = { adminId = it },
+                    label = { Text("Admin ID (required)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("Override note (required)") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
                 Spacer(Modifier.height(14.dp))
 
                 Box(
                     Modifier
                         .fillMaxWidth()
-                        .height(260.dp)
+                        .height(canvasHeightDp)
                         .background(SurfaceAlt, RoundedCornerShape(14.dp))
                         .border(2.dp, if (hasInk) accent else Line, RoundedCornerShape(14.dp))
                         .pointerInput(Unit) {
@@ -113,7 +143,7 @@ fun SignatureDialog(
                             )
                         },
                 ) {
-                    Canvas(Modifier.fillMaxWidth().height(260.dp)) {
+                    Canvas(Modifier.fillMaxWidth().height(canvasHeightDp)) {
                         canvasWidth = size.width.toInt()
                         canvasHeight = size.height.toInt()
                         @Suppress("UNUSED_EXPRESSION") revision // read so this redraws on each point
@@ -144,40 +174,55 @@ fun SignatureDialog(
 
                 Spacer(Modifier.height(16.dp))
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(
-                        onClick = {
-                            strokes.clear()
-                            revision++
-                        },
-                        enabled = strokes.isNotEmpty(),
-                    ) { Text("Clear") }
-
-                    TextButton(
-                        onClick = {
-                            strokes.removeLastOrNull()
-                            revision++
-                        },
-                        enabled = strokes.isNotEmpty(),
-                    ) { Text("Undo") }
-
-                    Spacer(Modifier.weight(1f))
-
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel", color = InkMuted)
-                    }
-                    Spacer(Modifier.width(8.dp))
+                val clearStrokes: () -> Unit = {
+                    strokes.clear()
+                    revision++
+                }
+                val undoStroke: () -> Unit = {
+                    strokes.removeLastOrNull()
+                    revision++
+                }
+                val saveButton: @Composable () -> Unit = {
                     Button(
                         onClick = {
                             val encoded = rasterise(strokes, canvasWidth, canvasHeight)
-                            onConfirm(encoded)
+                            onConfirm(encoded, adminId.trim(), note.trim())
                         },
-                        enabled = hasInk,
+                        enabled = hasInk && adminId.isNotBlank() && note.isNotBlank(),
                         colors = ButtonDefaults.buttonColors(containerColor = accent),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.height(52.dp),
                     ) {
-                        Text("Confirm", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Save override", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                if (compactWidth) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row {
+                            TextButton(onClick = clearStrokes, enabled = strokes.isNotEmpty()) { Text("Clear") }
+                            TextButton(onClick = undoStroke, enabled = strokes.isNotEmpty()) { Text("Undo") }
+                        }
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(onClick = onDismiss) { Text("Cancel", color = InkMuted) }
+                            Spacer(Modifier.width(8.dp))
+                            saveButton()
+                        }
+                    }
+                } else {
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(onClick = clearStrokes, enabled = strokes.isNotEmpty()) { Text("Clear") }
+                        TextButton(onClick = undoStroke, enabled = strokes.isNotEmpty()) { Text("Undo") }
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = onDismiss) { Text("Cancel", color = InkMuted) }
+                        Spacer(Modifier.width(8.dp))
+                        saveButton()
                     }
                 }
             }

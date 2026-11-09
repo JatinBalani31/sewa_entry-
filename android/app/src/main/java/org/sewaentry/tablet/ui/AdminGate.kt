@@ -27,6 +27,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,73 +42,151 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.sewaentry.tablet.data.AdminLock
+import org.sewaentry.tablet.data.PinAttemptResult
+import kotlin.math.ceil
+
+enum class AdminGateMode {
+    ACCESS,
+    CHANGE_PIN,
+}
+
+private enum class GateStage {
+    VERIFY_CURRENT,
+    CHOOSE_NEW,
+    CONFIRM_NEW,
+}
 
 /**
- * The PIN screen in front of the summary and the roster.
+ * PIN gate for the manual-entry and admin screens.
  *
- * Its own keypad rather than a text field: the tablet sits on a counter and the
- * soft keyboard is slow, cramped and covers half the screen. Four large keys
- * across is quick with one hand.
- *
- * On a tablet with no PIN set, this asks for one to be chosen and confirmed —
- * so the protection exists from the first time anyone opens the admin side,
- * without a default PIN that everybody would end up knowing.
+ * Existing four-digit installations must authenticate with their old PIN
+ * before choosing a new six-digit PIN. New installations set and confirm a
+ * six-digit PIN before entering the admin area.
  */
 @Composable
 fun AdminGate(
     configured: Boolean,
-    onUnlock: (String) -> Boolean,
+    migrationRequired: Boolean,
+    mode: AdminGateMode = AdminGateMode.ACCESS,
+    onUnlock: (String) -> PinAttemptResult,
+    onVerifyCurrentPin: (String) -> PinAttemptResult,
     onSetPin: (String) -> Boolean,
+    onChangePin: (current: String, next: String) -> PinAttemptResult,
+    onCancel: (() -> Unit)? = null,
 ) {
+    val firstSetup = !configured
+    var stage by remember(configured, migrationRequired, mode) {
+        mutableStateOf(
+            if (firstSetup) GateStage.CHOOSE_NEW else GateStage.VERIFY_CURRENT,
+        )
+    }
     var entry by remember { mutableStateOf("") }
-    var confirming by remember { mutableStateOf<String?>(null) }
+    var newPin by remember { mutableStateOf<String?>(null) }
+    var verifiedCurrentPin by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    val settingUp = !configured
-
+    val oldPinLength = if (migrationRequired) AdminLock.LEGACY_LENGTH else AdminLock.LENGTH
+    val entryLength = if (stage == GateStage.VERIFY_CURRENT) oldPinLength else AdminLock.LENGTH
     val title = when {
-        !settingUp -> "Enter admin PIN"
-        confirming == null -> "Choose an admin PIN"
-        else -> "Enter it again"
+        stage == GateStage.VERIFY_CURRENT && migrationRequired -> "Update your admin PIN"
+        stage == GateStage.VERIFY_CURRENT && mode == AdminGateMode.CHANGE_PIN -> "Enter current admin PIN"
+        stage == GateStage.VERIFY_CURRENT -> "Enter admin PIN"
+        stage == GateStage.CHOOSE_NEW -> "Choose a six-digit PIN"
+        else -> "Confirm your new PIN"
     }
     val subtitle = when {
-        !settingUp -> "The summary and roster are for the admin. The register stays open to everyone."
-        confirming == null -> "Four digits. It protects the summary and the roster on this tablet."
-        else -> "Confirming, so a slip now does not lock the tablet later."
+        stage == GateStage.VERIFY_CURRENT && migrationRequired ->
+            "Enter your existing four-digit PIN to continue. You must choose a new six-digit PIN."
+        stage == GateStage.VERIFY_CURRENT && mode == AdminGateMode.CHANGE_PIN ->
+            "Verify your current PIN before changing it."
+        stage == GateStage.VERIFY_CURRENT ->
+            "The manual-entry and admin screens are locked. The register will open after verification."
+        stage == GateStage.CHOOSE_NEW ->
+            "Use six digits. This PIN protects manual attendance changes and admin settings."
+        else -> "Enter the same six digits again to confirm."
+    }
+
+    fun reject(result: PinAttemptResult) {
+        error = if (result.retryAfterMillis > 0) {
+            val minutes = ceil(result.retryAfterMillis / 60_000.0).toInt()
+            "Too many incorrect attempts. Try again in ${minutes.coerceAtLeast(1)} minute(s)."
+        } else {
+            "Incorrect PIN. Try again."
+        }
+        entry = ""
     }
 
     fun submit(pin: String) {
-        when {
-            !settingUp -> {
-                if (onUnlock(pin)) error = null
-                else { error = "Wrong PIN."; entry = "" }
-            }
-            confirming == null -> { confirming = pin; entry = ""; error = null }
-            confirming != pin -> {
-                error = "Those did not match. Start again."
-                confirming = null
-                entry = ""
-            }
-            else -> {
-                if (!onSetPin(pin)) {
-                    error = "That PIN could not be set."
-                    confirming = null
+        when (stage) {
+            GateStage.VERIFY_CURRENT -> {
+                val result = if (migrationRequired || mode == AdminGateMode.CHANGE_PIN) {
+                    onVerifyCurrentPin(pin)
+                } else {
+                    onUnlock(pin)
+                }
+                if (!result.accepted) {
+                    reject(result)
+                    return
+                }
+
+                if (migrationRequired || mode == AdminGateMode.CHANGE_PIN) {
+                    verifiedCurrentPin = pin
+                    stage = GateStage.CHOOSE_NEW
                     entry = ""
+                    error = null
+                } else {
+                    error = null
+                }
+            }
+
+            GateStage.CHOOSE_NEW -> {
+                newPin = pin
+                stage = GateStage.CONFIRM_NEW
+                entry = ""
+                error = null
+            }
+
+            GateStage.CONFIRM_NEW -> {
+                if (pin != newPin) {
+                    error = "Those PINs did not match. Choose a new PIN and try again."
+                    newPin = null
+                    stage = GateStage.CHOOSE_NEW
+                    entry = ""
+                    return
+                }
+
+                if (firstSetup) {
+                    if (onSetPin(pin)) {
+                        error = null
+                    } else {
+                        error = "The PIN could not be set. Enter six digits and try again."
+                        newPin = null
+                        stage = GateStage.CHOOSE_NEW
+                        entry = ""
+                    }
+                } else {
+                    val result = onChangePin(verifiedCurrentPin.orEmpty(), pin)
+                    if (result.accepted) {
+                        error = null
+                    } else {
+                        reject(result)
+                        newPin = null
+                        stage = GateStage.VERIFY_CURRENT
+                        verifiedCurrentPin = null
+                    }
                 }
             }
         }
     }
 
     fun press(digit: String) {
-        if (entry.length >= AdminLock.LENGTH) return
+        if (entry.length >= entryLength) return
         error = null
         val next = entry + digit
         entry = next
-        if (next.length == AdminLock.LENGTH) submit(next)
+        if (next.length == entryLength) submit(next)
     }
 
-    // A phone screen has far less width than the 10" tablet this was designed
-    // for, so the card and its keypad shrink to fit rather than clipping.
     val compact = isCompactWidth()
     val keyWidth = if (compact) 76.dp else 96.dp
     val keyHeight = if (compact) 56.dp else 68.dp
@@ -122,9 +201,6 @@ fun AdminGate(
             Column(
                 Modifier
                     .padding(if (compact) 20.dp else 32.dp)
-                    // A short screen (a phone in landscape, or a small window)
-                    // can be shorter than the keypad; scrolling beats clipping
-                    // off the bottom rows of keys.
                     .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -147,12 +223,15 @@ fun AdminGate(
 
                 Spacer(Modifier.height(22.dp))
 
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    repeat(AdminLock.LENGTH) { index ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    repeat(entryLength) { index ->
                         val filled = index < entry.length
                         Box(
                             Modifier
-                                .size(22.dp)
+                                .size(18.dp)
                                 .clip(CircleShape)
                                 .background(if (filled) Navy else Line),
                         )
@@ -165,21 +244,28 @@ fun AdminGate(
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = DepartureRed,
+                    textAlign = TextAlign.Center,
                 )
                 Spacer(Modifier.height(10.dp))
 
-                // 1-9, then blank / 0 / backspace.
                 listOf("123", "456", "789").forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(keySpacing)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
                         row.forEach { digit ->
                             Key(digit.toString(), keyWidth, keyHeight) { press(digit.toString()) }
                         }
                     }
                     Spacer(Modifier.height(keySpacing))
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(keySpacing)) {
-                    Spacer(Modifier.width(keyWidth))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Spacer(Modifier.width(keyWidth + keySpacing))
                     Key("0", keyWidth, keyHeight) { press("0") }
+                    Spacer(Modifier.width(keySpacing))
                     Button(
                         onClick = { entry = entry.dropLast(1); error = null },
                         shape = RoundedCornerShape(16.dp),
@@ -189,13 +275,23 @@ fun AdminGate(
                         Icon(Icons.AutoMirrored.Filled.Backspace, contentDescription = "Delete", modifier = Modifier.size(24.dp))
                     }
                 }
+                if (onCancel != null) {
+                    TextButton(onClick = onCancel, modifier = Modifier.padding(top = 8.dp)) {
+                        Text("Cancel", color = InkMuted)
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun Key(label: String, width: androidx.compose.ui.unit.Dp, height: androidx.compose.ui.unit.Dp, onClick: () -> Unit) {
+private fun Key(
+    label: String,
+    width: androidx.compose.ui.unit.Dp,
+    height: androidx.compose.ui.unit.Dp,
+    onClick: () -> Unit,
+) {
     Button(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),

@@ -149,6 +149,7 @@ export function publicSewadar(sewadar) {
     id: sewadar.id,
     full_name: sewadar.full_name,
     phone: sewadar.phone ?? null,
+    organization: sewadar.organization ?? null,
     email: sewadar.email ?? null,
     role: sewadar.role,
     department_id: sewadar.department_id ?? null,

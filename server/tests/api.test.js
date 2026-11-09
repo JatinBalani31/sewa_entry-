@@ -107,6 +107,20 @@ test('a Sewadar signs in with their PIN, by ID or phone', async () => {
   assert.ok(await login('9000000001', '5837'));
 });
 
+test('a Sewadar organization can be created, updated, and searched in the web console', async () => {
+  const sewadar = await makeSewadar({ organization: 'Community Group' });
+  assert.equal(sewadar.organization, 'Community Group');
+
+  const updated = await call('PATCH', `/sewadars/${sewadar.id}`, {
+    token: admin,
+    body: { organization: 'Updated Community Group' },
+  });
+  assert.equal(updated.body.sewadar.organization, 'Updated Community Group');
+
+  const search = await call('GET', '/sewadars?search=Updated%20Community', { token: admin });
+  assert.ok(search.body.sewadars.some((row) => row.id === sewadar.id));
+});
+
 test('an unknown identifier fails the same way as a wrong secret', async () => {
   const unknown = await call('POST', '/auth/login', { body: { identifier: 'NOBODY', secret: '5837' } });
   assert.equal(unknown.status, 401);
@@ -132,12 +146,13 @@ test('a Sewadar cannot reach the admin screens', async () => {
 // Departments
 // ---------------------------------------------------------------------------
 
-test('the seeded departments are all there', async () => {
+test('all departments from the current roster are seeded for the MVP', async () => {
   const res = await call('GET', '/departments', { token: admin });
   assert.equal(res.status, 200);
 
   const names = res.body.departments.map((d) => d.name);
-  for (const expected of ['Accounts', 'BAV', 'Traffic', 'Luggage', 'Mobile', 'Safai', 'Transport']) {
+  assert.equal(names.length, 40);
+  for (const expected of ['Account', 'BAV', 'Traffic', 'Luggage', 'Mobile', 'Safai Group A', 'Transport (Traffic 1)']) {
     assert.ok(names.includes(expected), `expected a ${expected} department`);
   }
 });
@@ -172,7 +187,7 @@ test('an admin can add, rename and close a department', async () => {
 });
 
 test('a duplicate department name is refused', async () => {
-  const res = await call('POST', '/departments', { token: admin, body: { name: 'Accounts' } });
+  const res = await call('POST', '/departments', { token: admin, body: { name: 'Account' } });
   assert.equal(res.status, 409);
 });
 
@@ -549,7 +564,7 @@ test('a counter tablet is provisioned and signs a Sewadar in and out', async () 
 
 test('a station pinned to a department only lists that department', async () => {
   const departments = (await call('GET', '/departments', { token: admin })).body.departments;
-  const safai = departments.find((d) => d.name === 'Safai');
+  const safai = departments.find((d) => d.name === 'Safai Sewa Samiti');
 
   const provision = await call('POST', '/kiosk/provision', {
     token: admin,
@@ -559,7 +574,7 @@ test('a station pinned to a department only lists that department', async () => 
 
   const list = await call('GET', '/kiosk/sewadars', { token: kiosk });
   assert.ok(list.body.sewadars.length > 0);
-  assert.ok(list.body.sewadars.every((s) => s.department_name === 'Safai'));
+  assert.ok(list.body.sewadars.every((s) => s.department_name === 'Safai Sewa Samiti'));
 });
 
 test('the kiosk list carries no phone numbers or emails', async () => {
@@ -660,7 +675,7 @@ test('the workbook carries a sheet per department plus the register', async () =
   for (const expected of ['Summary', 'Register', 'All Entries', 'Exceptions', 'Report Info']) {
     assert.ok(names.includes(expected), `expected a ${expected} sheet, got ${names.join(', ')}`);
   }
-  for (const department of ['Accounts', 'Traffic', 'Safai']) {
+  for (const department of ['Account', 'Traffic', 'Safai Sewa Samiti']) {
     assert.ok(names.includes(department), `expected a ${department} sheet`);
   }
 

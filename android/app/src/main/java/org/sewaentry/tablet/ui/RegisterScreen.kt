@@ -18,17 +18,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Login
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.Login
-import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -36,6 +40,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -57,21 +62,17 @@ import androidx.compose.ui.unit.sp
 import org.sewaentry.tablet.data.SewaDays
 import org.sewaentry.tablet.data.SewadarWithStatus
 
-/** Which signature dialog is open, if any. */
-private sealed interface Capture {
-    data class Arrival(val sewadar: SewadarWithStatus) : Capture
-    data class Departure(val sewadar: SewadarWithStatus) : Capture
-}
 
-// Sized for a finger on a 10" tablet, not a mouse.
-private val ACTION_BUTTON_HEIGHT = 76.dp
-private val ACTION_BUTTON_WIDTH = 210.dp
 
-// A phone screen has nowhere near 210dp x 3 to spare, so the same buttons
-// shrink rather than push each other off the edge. Wide enough that "Manual"
-// and "Arrival" each stay on one line rather than wrapping mid-word.
-private val COMPACT_ACTION_BUTTON_HEIGHT = 60.dp
-private val COMPACT_ACTION_BUTTON_WIDTH = 156.dp
+// Compact action controls leave more of the roster visible while staying finger-friendly.
+private val ACTION_BUTTON_HEIGHT = 48.dp
+private val ACTION_BUTTON_WIDTH = 112.dp
+private val LIVE_ACTION_BUTTON_WIDTH = 168.dp
+
+private val COMPACT_ACTION_BUTTON_HEIGHT = 40.dp
+private val COMPACT_ACTION_BUTTON_WIDTH = 105.dp
+private val COMPACT_LIVE_ACTION_BUTTON_WIDTH = 158.dp
+private val MANUAL_ACTION_COLOR = Color(0xFF6750A4)
 
 @Composable
 fun RegisterScreen(vm: RegisterViewModel) {
@@ -83,12 +84,13 @@ fun RegisterScreen(vm: RegisterViewModel) {
     val recordedDates by vm.recordedDates.collectAsState()
     val isToday by vm.isToday.collectAsState()
 
-    var capture by remember { mutableStateOf<Capture?>(null) }
     // The action bar floats over the grid, so the grid needs to know how tall
     // it is - otherwise the last row of tiles sits underneath it, unreadable
     // and untappable.
     var actionBarHeightPx by remember { mutableIntStateOf(0) }
     var addingSewadar by remember { mutableStateOf(false) }
+    var removingSewadar by remember { mutableStateOf<SewadarWithStatus?>(null) }
+    var editingSewadar by remember { mutableStateOf<SewadarWithStatus?>(null) }
     var manualFor by remember { mutableStateOf<SewadarWithStatus?>(null) }
 
     Box(Modifier.fillMaxSize().background(Background)) {
@@ -212,9 +214,12 @@ fun RegisterScreen(vm: RegisterViewModel) {
                 // buttons are withheld entirely and Manual is the only way in.
                 allowLiveCapture = isToday,
                 compact = compact,
-                onArrival = { capture = Capture.Arrival(sewadar) },
-                onDeparture = { capture = Capture.Departure(sewadar) },
+                onArrival = { vm.recordArrival(sewadar.sewadarId) },
+                onDeparture = { vm.recordDeparture(sewadar.sewadarId) },
                 onManual = { manualFor = sewadar },
+                onEdit = { editingSewadar = sewadar },
+                onRemove = { removingSewadar = sewadar },
+                onClose = { vm.selectSewadar(null) },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     // Outside the padding, so the grid is told the whole
@@ -226,39 +231,40 @@ fun RegisterScreen(vm: RegisterViewModel) {
         }
     }
 
-    when (val current = capture) {
-        is Capture.Arrival -> SignatureDialog(
-            title = current.sewadar.name,
-            subtitle = "Sign to record arrival at ${SewaDays.formatTime(System.currentTimeMillis())}",
-            accent = ArrivalGreen,
-            onDismiss = { capture = null },
-            onConfirm = { signature ->
-                vm.recordArrival(current.sewadar.sewadarId, signature)
-                capture = null
-            },
-        )
-
-        is Capture.Departure -> SignatureDialog(
-            title = current.sewadar.name,
-            subtitle = "Sign to record departure at ${SewaDays.formatTime(System.currentTimeMillis())}",
-            accent = DepartureRed,
-            onDismiss = { capture = null },
-            onConfirm = { signature ->
-                vm.recordDeparture(current.sewadar.sewadarId, signature)
-                capture = null
-            },
-        )
-
-        null -> Unit
-    }
-
     if (addingSewadar) {
         AddSewadarDialog(
             departmentName = departments.firstOrNull { it.id == departmentId }?.name ?: "",
             onDismiss = { addingSewadar = false },
-            onAdd = { name, phone ->
-                vm.addSewadar(name, phone)
+            onVerifyPin = vm::verifyCurrentPin,
+            onAdd = { name, phone, organization ->
+                vm.addSewadar(name, phone, organization)
                 addingSewadar = false
+            },
+        )
+    }
+
+    removingSewadar?.let { sewadar ->
+        RemoveSewadarDialog(
+            sewadarName = sewadar.name,
+            departmentName = sewadar.departmentName ?: departments.firstOrNull { it.id == departmentId }?.name ?: "",
+            onDismiss = { removingSewadar = null },
+            onVerifyPin = vm::verifyCurrentPin,
+            onConfirmRemove = {
+                vm.removeSewadar(sewadar.sewadarId)
+                removingSewadar = null
+            },
+        )
+    }
+
+    editingSewadar?.let { sewadar ->
+        EditSewadarDialog(
+            sewadar = sewadar,
+            departments = departments.map { it.id to it.name },
+            onDismiss = { editingSewadar = null },
+            onVerifyPin = vm::verifyCurrentPin,
+            onSave = { name, phone, organization, newDepartmentId ->
+                vm.updateSewadarDetails(sewadar.sewadarId, name, phone, organization, newDepartmentId)
+                editingSewadar = null
             },
         )
     }
@@ -273,8 +279,8 @@ fun RegisterScreen(vm: RegisterViewModel) {
                 vm.manualSetTime(sewadar.sewadarId, arrival, hour, minute)
                 manualFor = null
             },
-            onClear = {
-                vm.clearRecord(sewadar.sewadarId)
+            onClear = { arrival ->
+                vm.clearRecord(sewadar.sewadarId, arrival)
                 manualFor = null
             },
         )
@@ -375,33 +381,32 @@ private fun SewadarTile(
         shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = container),
         modifier = Modifier
-            .height(178.dp)
+            .height(154.dp)
             .border(if (isSelected) 4.dp else 1.dp, borderColor, RoundedCornerShape(22.dp))
             .clickable(onClick = onClick),
     ) {
-        Column(Modifier.fillMaxSize().padding(18.dp)) {
+        Column(Modifier.fillMaxSize().padding(14.dp)) {
             Text(
                 sewadar.name,
-                fontSize = 22.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = Ink,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
 
-            // The contact sheet marks the HOD in bold; carrying that onto the
-            // tile means whoever is on the counter can see who leads a team
-            // without having to know the department.
-            if (sewadar.isHod) {
-                Spacer(Modifier.height(6.dp))
+            sewadar.organization?.takeIf { it.isNotBlank() }?.let { organization ->
+                Spacer(Modifier.height(4.dp))
                 Text(
-                    "HOD",
+                    organization,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = Navy,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
                         .background(SurfaceAlt, RoundedCornerShape(6.dp))
-                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
                 )
             }
 
@@ -424,10 +429,10 @@ private fun SewadarTile(
             }
 
             if (arrived && departed) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(4.dp))
                 Text(
                     SewaDays.formatDuration(SewaDays.minutesBetween(sewadar.arrivalAt, sewadar.departureAt)),
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
                     color = InkMuted,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -447,7 +452,7 @@ private fun StatusChip(
         Modifier
             .background(if (filled) accent else Color.Transparent, RoundedCornerShape(999.dp))
             .then(if (!filled) Modifier.border(2.dp, Line, RoundedCornerShape(999.dp)) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         Text(
             // A trailing asterisk marks a time an admin typed rather than one
@@ -463,9 +468,8 @@ private fun StatusChip(
 /**
  * Bottom-right action bar for the picked sewadar.
  *
- * On today: Arrival first, then Departure once there is an arrival to close,
- * with Manual always available alongside. On any past day the live buttons are
- * absent entirely — the device clock would record the wrong thing.
+ * The controls stay ordered Arrival, Departure, Manual, Edit, Remove. On a
+ * past day, the live controls become read-only status chips.
  */
 @Composable
 private fun ActionBar(
@@ -474,6 +478,9 @@ private fun ActionBar(
     onArrival: () -> Unit,
     onDeparture: () -> Unit,
     onManual: () -> Unit,
+    onEdit: () -> Unit,
+    onRemove: () -> Unit,
+    onClose: () -> Unit,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
 ) {
@@ -481,64 +488,70 @@ private fun ActionBar(
     val departed = sewadar.departureAt != null
 
     val nameBlock: @Composable () -> Unit = {
-        Column(if (compact) Modifier else Modifier.padding(end = 20.dp)) {
-            Text(sewadar.name, fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Column {
+            Text(
+                sewadar.name,
+                fontSize = if (compact) 16.sp else 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = Ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Text(
                 when {
-                    departed -> "Complete"
+                    departed -> "Left at ${SewaDays.formatTime(sewadar.departureAt)}"
                     arrived -> "Signed in at ${SewaDays.formatTime(sewadar.arrivalAt)}"
                     else -> "Not yet arrived"
                 },
-                fontSize = 14.sp,
+                fontSize = if (compact) 11.sp else 12.sp,
                 color = InkMuted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
 
     val controls: @Composable () -> Unit = {
-        ManualButton(onClick = onManual, compact = compact)
-
         if (allowLiveCapture) {
-            Spacer(Modifier.width(12.dp))
-
-            if (!arrived) {
-                LiveButton(
-                    label = "Arrival",
-                    icon = Icons.Filled.Login,
-                    accent = ArrivalGreen,
-                    onClick = onArrival,
-                    compact = compact,
-                )
-            } else {
-                FilledChipButton("Arrived ${SewaDays.formatTime(sewadar.arrivalAt)}", ArrivalGreen, compact)
-                Spacer(Modifier.width(12.dp))
-                if (!departed) {
-                    LiveButton(
-                        label = "Departure",
-                        icon = Icons.Filled.Logout,
-                        accent = DepartureRed,
-                        onClick = onDeparture,
-                        compact = compact,
-                    )
-                } else {
-                    FilledChipButton("Left ${SewaDays.formatTime(sewadar.departureAt)}", DepartureRed, compact)
-                }
-            }
+            LiveButton(
+                label = "Arrival",
+                icon = Icons.AutoMirrored.Filled.Login,
+                accent = ArrivalGreen,
+                onClick = onArrival,
+                enabled = !arrived || departed,
+                compact = compact,
+                width = if (compact) COMPACT_LIVE_ACTION_BUTTON_WIDTH else LIVE_ACTION_BUTTON_WIDTH,
+            )
+            Spacer(Modifier.width(4.dp))
+            LiveButton(
+                label = "Departure",
+                icon = Icons.AutoMirrored.Filled.Logout,
+                accent = DepartureRed,
+                onClick = onDeparture,
+                enabled = arrived && !departed,
+                compact = compact,
+                width = if (compact) COMPACT_LIVE_ACTION_BUTTON_WIDTH else LIVE_ACTION_BUTTON_WIDTH,
+            )
         } else {
-            // Past day: show what is on record, with no way to capture live.
-            Spacer(Modifier.width(12.dp))
             RecordedChip(
                 text = if (arrived) "In ${SewaDays.formatTime(sewadar.arrivalAt)}" else "No arrival",
                 accent = if (arrived) ArrivalGreen else InkMuted,
                 compact = compact,
             )
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(8.dp))
             RecordedChip(
                 text = if (departed) "Out ${SewaDays.formatTime(sewadar.departureAt)}" else "No departure",
                 accent = if (departed) DepartureRed else InkMuted,
                 compact = compact,
             )
         }
+
+        Spacer(Modifier.width(8.dp))
+        ManualButton(onClick = onManual, compact = compact)
+        Spacer(Modifier.width(4.dp))
+        EditButton(onClick = onEdit, compact = compact)
+        Spacer(Modifier.width(4.dp))
+        RemoveButton(onClick = onRemove, compact = compact)
     }
 
     Card(
@@ -547,45 +560,100 @@ private fun ActionBar(
         elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
         modifier = modifier,
     ) {
-        if (compact) {
-            // Splitting the name onto its own line, above the buttons, frees
-            // the whole card width for the controls — the thing most likely
-            // to otherwise run out of room on a phone. A horizontal scroll
-            // stays as a last-resort fallback, never the primary path.
-            Column(Modifier.padding(14.dp)) {
-                nameBlock()
-                Spacer(Modifier.height(10.dp))
-                Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) { controls() }
-            }
-        } else {
-            Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                nameBlock()
-                controls()
-            }
+        Row(
+            Modifier.fillMaxWidth().padding(if (compact) 8.dp else 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.weight(0.8f).widthIn(max = 180.dp)) { nameBlock() }
+            Row(
+                Modifier.weight(2.4f).horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+            ) { controls() }
+            CloseActionButton(onClick = onClose, compact = compact)
         }
     }
 }
 
-/** Grey, and the same size as Arrival so the bar reads as one row of controls. */
+@Composable
+private fun CloseActionButton(onClick: () -> Unit, compact: Boolean) {
+    IconButton(onClick = onClick, modifier = Modifier.size(if (compact) 40.dp else 44.dp)) {
+        Icon(
+            Icons.Filled.Close,
+            contentDescription = "Close sewadar actions",
+            tint = InkMuted,
+        )
+    }
+}
+
+@Composable
+private fun EditButton(onClick: () -> Unit, compact: Boolean = false) {
+    OutlinedButton(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .height(if (compact) COMPACT_ACTION_BUTTON_HEIGHT else ACTION_BUTTON_HEIGHT)
+            .width(if (compact) COMPACT_ACTION_BUTTON_WIDTH else ACTION_BUTTON_WIDTH),
+        contentPadding = PaddingValues(horizontal = 2.dp),
+    ) {
+        Icon(Icons.Filled.Edit, contentDescription = "Edit sewadar", modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(2.dp))
+        Text(
+            "EDIT",
+            fontSize = if (compact) 13.sp else 15.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+        )
+    }
+}
+
+@Composable
+private fun RemoveButton(onClick: () -> Unit, compact: Boolean = false) {
+    OutlinedButton(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .height(if (compact) COMPACT_ACTION_BUTTON_HEIGHT else ACTION_BUTTON_HEIGHT)
+            .width(if (compact) COMPACT_ACTION_BUTTON_WIDTH else ACTION_BUTTON_WIDTH),
+        contentPadding = PaddingValues(horizontal = 2.dp),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = DepartureRed),
+        border = BorderStroke(2.dp, DepartureRed.copy(alpha = 0.5f)),
+    ) {
+        Icon(Icons.Filled.Delete, contentDescription = "Remove sewadar", modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(2.dp))
+        Text(
+            "REMOVE",
+            fontSize = if (compact) 13.sp else 15.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+        )
+    }
+}
+
+/** Grey alternative to live arrival/departure controls. */
 @Composable
 private fun ManualButton(onClick: () -> Unit, compact: Boolean = false) {
     OutlinedButton(
         onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         modifier = Modifier
             .height(if (compact) COMPACT_ACTION_BUTTON_HEIGHT else ACTION_BUTTON_HEIGHT)
             .width(if (compact) COMPACT_ACTION_BUTTON_WIDTH else ACTION_BUTTON_WIDTH),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = InkMuted),
-        border = BorderStroke(2.dp, Line),
+        contentPadding = PaddingValues(horizontal = 2.dp),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = MANUAL_ACTION_COLOR),
+        border = BorderStroke(2.dp, MANUAL_ACTION_COLOR.copy(alpha = 0.6f)),
     ) {
-        Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(10.dp))
+        Icon(
+            Icons.Filled.AccessTime,
+            contentDescription = null,
+            tint = MANUAL_ACTION_COLOR,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(2.dp))
         Text(
-            "Manual",
-            fontSize = if (compact) 16.sp else 20.sp,
+            "MANUAL",
+            fontSize = if (compact) 13.sp else 15.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             softWrap = false,
@@ -599,22 +667,31 @@ private fun LiveButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     accent: Color,
     onClick: () -> Unit,
+    enabled: Boolean = true,
     compact: Boolean = false,
+    width: androidx.compose.ui.unit.Dp = if (compact) COMPACT_ACTION_BUTTON_WIDTH else ACTION_BUTTON_WIDTH,
 ) {
     OutlinedButton(
         onClick = onClick,
         shape = RoundedCornerShape(16.dp),
         modifier = Modifier
             .height(if (compact) COMPACT_ACTION_BUTTON_HEIGHT else ACTION_BUTTON_HEIGHT)
-            .width(if (compact) COMPACT_ACTION_BUTTON_WIDTH else ACTION_BUTTON_WIDTH),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = accent),
-        border = BorderStroke(3.dp, accent),
+            .width(width),
+        contentPadding = PaddingValues(horizontal = 2.dp),
+        enabled = enabled,
+        colors = ButtonDefaults.outlinedButtonColors(
+            containerColor = if (enabled) Color.Transparent else SurfaceAlt,
+            contentColor = accent,
+            disabledContainerColor = Color.Transparent,
+            disabledContentColor = InkMuted,
+        ),
+        border = BorderStroke(if (enabled) 3.dp else 2.dp, if (enabled) accent else Line),
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(10.dp))
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(2.dp))
         Text(
-            label,
-            fontSize = if (compact) 16.sp else 20.sp,
+            label.uppercase(),
+            fontSize = if (compact) 13.sp else 15.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             softWrap = false,

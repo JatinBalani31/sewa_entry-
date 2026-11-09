@@ -1,2 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<full-backup-content />
+<full-backup-content>
+    <exclude domain="sharedpref" path="sewa-admin.xml" />
+    <exclude domain="sharedpref" path="sewa-admin-secure.xml" />
+    <exclude domain="database" path="." />
+</full-backup-content>

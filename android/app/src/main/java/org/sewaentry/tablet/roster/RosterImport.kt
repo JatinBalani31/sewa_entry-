@@ -25,6 +25,8 @@ object RosterImport {
     private val DEPARTMENT_LABEL = Regex("""^department\s*:?\s*-?\s*(.+)$""", RegexOption.IGNORE_CASE)
     private val NAME_HEADER = Regex("""name\s*of\s*sewadar""", RegexOption.IGNORE_CASE)
     private val CONTACT_HEADER = Regex("""contact|mobile|phone""", RegexOption.IGNORE_CASE)
+    private val ORGANIZATION_HEADER = Regex("""organization|organisation|company""", RegexOption.IGNORE_CASE)
+    private val HOD_HEADER = Regex("""\bhod\b|head\s*of\s*department""", RegexOption.IGNORE_CASE)
 
     /** How far down to look for the department line and the table header. */
     private const val HEADER_SEARCH_ROWS = 15
@@ -114,13 +116,20 @@ object RosterImport {
         return headers.mapIndexed { index, header ->
             // Contact columns run from just after the name to just before the
             // next table begins, capped at two — the sheet's own layout.
-            val limit = headers.getOrNull(index + 1)?.col ?: (header.col + 3)
+            val limit = headers.getOrNull(index + 1)?.col
+                ?: ((sheet.cells.filter { it.row == header.row }.maxOfOrNull { it.col } ?: (header.col + 2)) + 1)
             val contacts = ((header.col + 1) until minOf(limit, header.col + 3))
                 .filter { col ->
                     val heading = sheet.text(header.row, col)
                     heading.isEmpty() || CONTACT_HEADER.containsMatchIn(heading)
                 }
-            Block(headerRow = header.row, nameCol = header.col, contactCols = contacts)
+            val organizationCol = (header.col + 1 until limit).firstOrNull {
+                ORGANIZATION_HEADER.containsMatchIn(sheet.text(header.row, it))
+            }
+            val hodCol = (header.col + 1 until limit).firstOrNull {
+                HOD_HEADER.containsMatchIn(sheet.text(header.row, it))
+            }
+            Block(headerRow = header.row, nameCol = header.col, contactCols = contacts, organizationCol = organizationCol, hodCol = hodCol)
         }
     }
 
@@ -142,7 +151,9 @@ object RosterImport {
                 name = name,
                 phone = phones.getOrNull(0),
                 phone2 = phones.getOrNull(1),
-                isHod = sheet.isBold(row, block.nameCol),
+                organization = block.organizationCol?.let { sheet.text(row, it).collapseSpaces().ifBlank { null } },
+                isHod = sheet.isBold(row, block.nameCol) ||
+                    block.hodCol?.let { sheet.text(row, it).equals("yes", ignoreCase = true) || sheet.text(row, it).equals("true", ignoreCase = true) } == true,
             )
         }
         return people
@@ -167,6 +178,7 @@ object RosterImport {
                 byKey[key] = existing.copy(
                     phone = existing.phone ?: person.phone,
                     phone2 = existing.phone2 ?: person.phone2,
+                    organization = existing.organization ?: person.organization,
                     isHod = existing.isHod || person.isHod,
                 )
             }
@@ -202,7 +214,13 @@ object RosterImport {
         return if (digits.length < 6) "" else digits
     }
 
-    private data class Block(val headerRow: Int, val nameCol: Int, val contactCols: List<Int>)
+    private data class Block(
+        val headerRow: Int,
+        val nameCol: Int,
+        val contactCols: List<Int>,
+        val organizationCol: Int?,
+        val hodCol: Int?,
+    )
     private data class Deduped(val rows: List<ParsedSewadar>, val duplicates: Int)
 }
 
@@ -210,6 +228,7 @@ data class ParsedSewadar(
     val name: String,
     val phone: String? = null,
     val phone2: String? = null,
+    val organization: String? = null,
     /** Bold in the sheet — the sangat's own marking for the head of department. */
     val isHod: Boolean = false,
 )

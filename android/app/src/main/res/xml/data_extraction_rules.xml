@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
-    <cloud-backup />
-    <device-transfer />
+    <cloud-backup>
+        <exclude domain="sharedpref" path="sewa-admin.xml" />
+        <exclude domain="sharedpref" path="sewa-admin-secure.xml" />
+        <exclude domain="database" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="sewa-admin.xml" />
+        <exclude domain="sharedpref" path="sewa-admin-secure.xml" />
+        <exclude domain="database" path="." />
+    </device-transfer>
 </data-extraction-rules>

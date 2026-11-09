@@ -1,9 +1,14 @@
 package org.sewaentry.tablet.data
 
+import android.database.sqlite.SQLiteException
 import androidx.room.withTransaction
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
+import org.sewaentry.tablet.face.AttendanceDirection
+import org.sewaentry.tablet.face.FaceAttendancePolicy
 import org.sewaentry.tablet.roster.ParsedDepartment
 import java.time.LocalDate
+import java.util.UUID
 
 /**
  * The one place attendance is written.
@@ -27,15 +32,64 @@ class SewaRepository(private val db: SewaDatabase) {
 
     fun recordedDates(): Flow<List<String>> = db.attendance().observeRecordedDates()
 
-    suspend fun addSewadar(name: String, departmentId: Long, phone: String?) {
+    suspend fun addSewadar(
+        name: String,
+        departmentId: Long,
+        phone: String?,
+        organization: String? = null,
+    ) {
         db.sewadars().insert(
-            SewadarEntity(name = name.trim(), departmentId = departmentId, phone = phone?.trim()?.ifBlank { null }),
+            SewadarEntity(
+                name = name.trim(),
+                departmentId = departmentId,
+                phone = phone?.trim()?.ifBlank { null },
+                organization = organization?.trim()?.ifBlank { null },
+            ),
+        )
+    }
+
+    suspend fun updateSewadarDetails(
+        sewadarId: Long,
+        name: String,
+        phone: String?,
+        organization: String?,
+        departmentId: Long,
+    ) {
+        require(name.isNotBlank()) { "Name cannot be empty." }
+        val current = db.sewadars().findById(sewadarId)
+            ?: throw IllegalArgumentException("This sewadar could not be found.")
+        val department = db.departments().findById(departmentId)
+            ?: throw IllegalArgumentException("The selected department could not be found.")
+        require(department.isActive) { "The selected department is no longer active." }
+        db.sewadars().update(
+            current.copy(
+                name = name.trim(),
+                phone = phone?.trim()?.ifBlank { null },
+                organization = organization?.trim()?.ifBlank { null },
+                departmentId = departmentId,
+            ),
         )
     }
 
     suspend fun addDepartment(name: String) {
         db.departments().insert(DepartmentEntity(name = name.trim(), sortOrder = 100))
     }
+
+    suspend fun renameDepartment(departmentId: Long, name: String) {
+        val normalizedName = name.trim()
+        require(normalizedName.isNotBlank()) { "Department name cannot be empty." }
+        val department = db.departments().findById(departmentId)
+            ?: throw IllegalArgumentException("This department could not be found.")
+        val duplicate = db.departments().findByName(normalizedName)
+        require(duplicate == null || duplicate.id == departmentId) {
+            "A department with this name already exists."
+        }
+        db.departments().update(department.copy(name = normalizedName))
+    }
+
+    suspend fun activeDepartments(): List<DepartmentEntity> = db.departments().all()
+        .filter { it.isActive }
+        .sortedBy { it.name.lowercase() }
 
     suspend fun sewadarCount(): Int = db.sewadars().activeCount()
 
@@ -90,7 +144,8 @@ class SewaRepository(private val db: SewaDatabase) {
                             departmentId = departmentId,
                             phone = person.phone,
                             phone2 = person.phone2,
-                            isHod = person.isHod,
+                            isHod = false,
+                            organization = organizationWithHod(person.organization, person.isHod),
                         ),
                     )
                     if (id > 0) { added++; seen += id }
@@ -101,7 +156,7 @@ class SewaRepository(private val db: SewaDatabase) {
                         // erase a number that is already on file.
                         phone = person.phone ?: current.phone,
                         phone2 = person.phone2 ?: current.phone2,
-                        isHod = person.isHod,
+                        organization = organizationWithHod(person.organization, person.isHod) ?: current.organization,
                         isActive = true,
                     )
                     if (merged != current) {
@@ -133,6 +188,16 @@ class SewaRepository(private val db: SewaDatabase) {
         )
     }
 
+    private fun organizationWithHod(organization: String?, isHod: Boolean): String? {
+        if (!isHod) return organization?.trim()?.ifBlank { null }
+        val value = organization?.trim()?.ifBlank { null }
+        return when {
+            value == null -> "HOD"
+            Regex("""(?i)(^|\W)HOD($|\W)""").containsMatchIn(value) -> value
+            else -> "$value - HOD"
+        }
+    }
+
     suspend fun signatureFor(attendanceId: Long, arrival: Boolean): String? =
         if (arrival) db.attendance().arrivalSignature(attendanceId)
         else db.attendance().departureSignature(attendanceId)
@@ -148,59 +213,329 @@ class SewaRepository(private val db: SewaDatabase) {
         at: Long,
         signature: String?,
         edited: Boolean = false,
+        method: String? = null,
+        adminId: String? = null,
+        note: String? = null,
     ): Result<Unit> {
         val sewaDate = SewaDays.format(date)
-        val existing = db.attendance().find(sewadarId, sewaDate)
-
-        if (existing?.departureAt != null && at > existing.departureAt) {
-            return Result.failure(IllegalStateException("Arrival cannot be after the recorded departure."))
+        return try {
+            db.withTransaction {
+                val existing = db.attendance().find(sewadarId, sewaDate)
+                val latestLog = db.attendanceLogs().latestForDay(sewadarId, sewaDate)
+                val lastDirection = FaceAttendancePolicy.resolveLastDirection(
+                    latestEventType = latestLog?.eventType,
+                    legacyArrivalAt = existing?.arrivalAt,
+                    legacyDepartureAt = existing?.departureAt,
+                )
+                if (!edited && !FaceAttendancePolicy.isValidTransition(lastDirection, AttendanceDirection.IN)) {
+                    throw IllegalStateException("Record the departure before recording another arrival.")
+                }
+                if (edited && existing?.departureAt != null && at > existing.departureAt) {
+                    throw IllegalStateException("Arrival cannot be after the recorded departure.")
+                }
+                val lastRecordedAt = latestLog?.deviceTime
+                    ?: listOfNotNull(existing?.arrivalAt, existing?.departureAt).maxOrNull()
+                if (!edited && lastRecordedAt != null && at < lastRecordedAt) {
+                    throw IllegalStateException("Device time moved backwards; attendance was not recorded.")
+                }
+                val logId = writeManualLog(
+                    existingLogId = existing?.arrivalLogId,
+                    sewadarId = sewadarId,
+                    sewaDate = sewaDate,
+                    departmentId = departmentId,
+                    eventType = AttendanceDirection.IN,
+                    at = at,
+                    signature = signature,
+                    edited = edited,
+                    method = method,
+                    adminId = adminId,
+                    note = note,
+                )
+                val row = (existing ?: AttendanceEntity(
+                    sewadarId = sewadarId,
+                    sewaDate = sewaDate,
+                    departmentId = departmentId,
+                )).copy(
+                    departmentId = departmentId,
+                    arrivalAt = at,
+                    arrivalSignature = signature ?: existing?.arrivalSignature,
+                    arrivalEdited = edited,
+                    arrivalMethod = method ?: existing?.arrivalMethod,
+                    arrivalAdminId = adminId?.trim()?.ifBlank { null } ?: existing?.arrivalAdminId,
+                    arrivalNote = note?.trim()?.ifBlank { null } ?: existing?.arrivalNote,
+                    arrivalLogId = if (edited) existing?.arrivalLogId ?: logId else logId,
+                    departureAt = if (edited) existing?.departureAt else null,
+                    departureSignature = if (edited) existing?.departureSignature else null,
+                    departureEdited = if (edited) existing?.departureEdited ?: false else false,
+                    departureMethod = if (edited) existing?.departureMethod else null,
+                    departureAdminId = if (edited) existing?.departureAdminId else null,
+                    departureNote = if (edited) existing?.departureNote else null,
+                    departureLogId = if (edited) existing?.departureLogId else null,
+                    updatedAt = System.currentTimeMillis(),
+                )
+                db.attendance().upsert(row)
+            }
+            Result.success(Unit)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: IllegalArgumentException) {
+            Result.failure(error)
+        } catch (error: IllegalStateException) {
+            Result.failure(error)
+        } catch (error: SQLiteException) {
+            Result.failure(error)
         }
-
-        val row = (existing ?: AttendanceEntity(sewadarId = sewadarId, sewaDate = sewaDate, departmentId = departmentId))
-            .copy(
-                departmentId = departmentId,
-                arrivalAt = at,
-                arrivalSignature = signature ?: existing?.arrivalSignature,
-                arrivalEdited = edited,
-                updatedAt = System.currentTimeMillis(),
-            )
-        db.attendance().upsert(row)
-        return Result.success(Unit)
     }
 
     suspend fun recordDeparture(
         sewadarId: Long,
-        departmentId: Long?,
         date: LocalDate,
         at: Long,
         signature: String?,
         edited: Boolean = false,
+        method: String? = null,
+        adminId: String? = null,
+        note: String? = null,
     ): Result<Unit> {
         val sewaDate = SewaDays.format(date)
-        val existing = db.attendance().find(sewadarId, sewaDate)
-            ?: return Result.failure(IllegalStateException("Record the arrival first."))
+        return try {
+            db.withTransaction {
+                val existing = db.attendance().find(sewadarId, sewaDate)
+                    ?: throw IllegalStateException("Record the arrival first.")
+                val arrival = existing.arrivalAt
+                    ?: throw IllegalStateException("Record the arrival first.")
+                val latestLog = db.attendanceLogs().latestForDay(sewadarId, sewaDate)
+                val lastDirection = FaceAttendancePolicy.resolveLastDirection(
+                    latestEventType = latestLog?.eventType,
+                    legacyArrivalAt = existing.arrivalAt,
+                    legacyDepartureAt = existing.departureAt,
+                )
+                if (!edited && !FaceAttendancePolicy.isValidTransition(lastDirection, AttendanceDirection.OUT)) {
+                    throw IllegalStateException("Record a new arrival before recording departure.")
+                }
+                if (at < arrival) {
+                    throw IllegalStateException("Departure cannot be before the arrival.")
+                }
+                val lastRecordedAt = latestLog?.deviceTime
+                    ?: listOfNotNull(existing.arrivalAt, existing.departureAt).maxOrNull()
+                if (!edited && lastRecordedAt != null && at < lastRecordedAt) {
+                    throw IllegalStateException("Device time moved backwards; attendance was not recorded.")
+                }
+                val logId = writeManualLog(
+                    existingLogId = existing.departureLogId,
+                    sewadarId = sewadarId,
+                    sewaDate = sewaDate,
+                    departmentId = existing.departmentId,
+                    eventType = AttendanceDirection.OUT,
+                    at = at,
+                    signature = signature,
+                    edited = edited,
+                    method = method,
+                    adminId = adminId,
+                    note = note,
+                )
+                db.attendance().upsert(
+                    existing.copy(
+                        departureAt = at,
+                        departureSignature = signature ?: existing.departureSignature,
+                        departureEdited = edited,
+                        departureMethod = method ?: existing.departureMethod,
+                        departureAdminId = adminId?.trim()?.ifBlank { null } ?: existing.departureAdminId,
+                        departureNote = note?.trim()?.ifBlank { null } ?: existing.departureNote,
+                        departureLogId = logId,
+                        updatedAt = System.currentTimeMillis(),
+                    ),
+                )
+            }
+            Result.success(Unit)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: IllegalArgumentException) {
+            Result.failure(error)
+        } catch (error: IllegalStateException) {
+            Result.failure(error)
+        } catch (error: SQLiteException) {
+            Result.failure(error)
+        }
+    }
 
-        val arrival = existing.arrivalAt
-            ?: return Result.failure(IllegalStateException("Record the arrival first."))
-
-        if (at < arrival) {
-            return Result.failure(IllegalStateException("Departure cannot be before the arrival."))
+    suspend fun recordFaceAttendance(
+        sewadarId: Long,
+        departmentId: Long?,
+        date: LocalDate,
+        at: Long,
+        matchScore: Float,
+        livenessPassed: Boolean?,
+        forceDirection: AttendanceDirection? = null,
+        adminId: String? = null,
+        note: String? = null,
+    ): Result<FaceAttendanceRecorded> {
+        if (livenessPassed == false) {
+            return Result.failure(IllegalArgumentException("Liveness must pass before attendance is recorded."))
+        }
+        if (!matchScore.isFinite() || matchScore !in FaceAttendancePolicy.MATCH_THRESHOLD..1f) {
+            return Result.failure(IllegalArgumentException("Face match did not meet the required threshold."))
+        }
+        if (forceDirection != null && (adminId.isNullOrBlank() || note.isNullOrBlank())) {
+            return Result.failure(IllegalArgumentException("Admin ID and a note are required for a direction override."))
         }
 
-        db.attendance().upsert(
-            existing.copy(
-                departureAt = at,
-                departureSignature = signature ?: existing.departureSignature,
-                departureEdited = edited,
-                updatedAt = System.currentTimeMillis(),
-            ),
-        )
-        return Result.success(Unit)
+        val sewaDate = SewaDays.format(date)
+        return try {
+            val recorded = db.withTransaction {
+                val latestLog = db.attendanceLogs().latestForDay(sewadarId, sewaDate)
+                val existing = db.attendance().find(sewadarId, sewaDate)
+                val lastDirection = FaceAttendancePolicy.resolveLastDirection(
+                    latestEventType = latestLog?.eventType,
+                    legacyArrivalAt = existing?.arrivalAt,
+                    legacyDepartureAt = existing?.departureAt,
+                )
+                val direction = forceDirection ?: FaceAttendancePolicy.nextDirection(lastDirection)
+                val lastRecordedAt = latestLog?.deviceTime
+                    ?: listOfNotNull(existing?.arrivalAt, existing?.departureAt).maxOrNull()
+                if (lastRecordedAt != null && at < lastRecordedAt) {
+                    throw IllegalStateException("Device time moved backwards; face attendance was not recorded.")
+                }
+                if (forceDirection == null && lastRecordedAt != null && FaceAttendancePolicy.isCooldownActive(lastRecordedAt, at)) {
+                    val remainingSec = FaceAttendancePolicy.remainingCooldownSeconds(lastRecordedAt, at)
+                    val remainingMin = (remainingSec + 59) / 60
+                    throw IllegalStateException("Please wait at least 5 minutes before scanning again ($remainingMin min remaining).")
+                }
+
+                val trimmedAdminId = adminId?.trim()?.ifBlank { null }
+                val trimmedNote = note?.trim()?.ifBlank { null }
+                val eventId = db.attendanceLogs().insert(
+                    AttendanceLogEntity(
+                        clientLogId = UUID.randomUUID().toString(),
+                        sewadarId = sewadarId,
+                        sewaDate = sewaDate,
+                        departmentId = departmentId,
+                        eventType = direction.name,
+                        verificationMethod = FACE_METHOD,
+                        deviceTime = at,
+                        matchScore = matchScore,
+                        livenessPassed = livenessPassed,
+                        adminOverride = forceDirection != null,
+                        adminId = trimmedAdminId,
+                        note = trimmedNote,
+                    ),
+                )
+                val current = existing ?: AttendanceEntity(
+                    sewadarId = sewadarId,
+                    sewaDate = sewaDate,
+                    departmentId = departmentId,
+                )
+                val updated = when (direction) {
+                    AttendanceDirection.IN -> current.copy(
+                        departmentId = departmentId,
+                        arrivalAt = at,
+                        arrivalMethod = FACE_METHOD,
+                        arrivalAdminId = trimmedAdminId,
+                        arrivalNote = trimmedNote,
+                        arrivalEdited = false,
+                        arrivalLogId = eventId,
+                        departureAt = null,
+                        departureMethod = null,
+                        departureAdminId = null,
+                        departureNote = null,
+                        departureSignature = null,
+                        departureEdited = false,
+                        departureLogId = null,
+                        updatedAt = at,
+                    )
+                    AttendanceDirection.OUT -> current.copy(
+                        departmentId = departmentId,
+                        departureAt = at,
+                        departureMethod = FACE_METHOD,
+                        departureAdminId = trimmedAdminId,
+                        departureNote = trimmedNote,
+                        departureEdited = false,
+                        departureLogId = eventId,
+                        updatedAt = at,
+                    )
+                }
+                db.attendance().upsert(updated)
+                FaceAttendanceRecorded(direction = direction, deviceTime = at)
+            }
+            Result.success(recorded)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: IllegalArgumentException) {
+            Result.failure(error)
+        } catch (error: IllegalStateException) {
+            Result.failure(error)
+        } catch (error: SQLiteException) {
+            Result.failure(error)
+        }
     }
 
     /** Clears a day's record entirely — an admin fixing a wrong person tapped. */
-    suspend fun clear(sewadarId: Long, date: LocalDate) {
-        db.attendance().find(sewadarId, SewaDays.format(date))?.let { db.attendance().delete(it.id) }
+    suspend fun clear(
+        sewadarId: Long,
+        date: LocalDate,
+        arrival: Boolean? = null,
+        adminId: String? = null,
+        note: String? = null,
+    ): Result<Unit> {
+        val sewaDate = SewaDays.format(date)
+        return runCatching {
+            db.withTransaction {
+                db.attendanceOverrideAudit().insert(
+                    AttendanceOverrideAuditEntity(
+                        sewadarId = sewadarId,
+                        sewaDate = sewaDate,
+                        action = when (arrival) {
+                            true -> "CLEAR_ARRIVAL"
+                            false -> "CLEAR_DEPARTURE"
+                            null -> "CLEAR"
+                        },
+                        adminId = adminId?.trim()?.ifBlank { null } ?: "ADMIN",
+                        note = note?.trim()?.ifBlank { null } ?: "Manual clear",
+                    ),
+                )
+                val attendance = db.attendance().find(sewadarId, sewaDate)
+                if (arrival == null) {
+                    db.attendanceLogs().deleteForDay(sewadarId, sewaDate)
+                    attendance?.let { db.attendance().delete(it.id) }
+                } else if (attendance != null) {
+                    val cleared = if (arrival) {
+                        attendance.arrivalLogId?.let { db.attendanceLogs().deleteById(it) }
+                        attendance.copy(
+                            arrivalAt = null,
+                            arrivalMethod = null,
+                            arrivalAdminId = null,
+                            arrivalNote = null,
+                            arrivalSignature = null,
+                            arrivalEdited = false,
+                            arrivalLogId = null,
+                            updatedAt = System.currentTimeMillis(),
+                        )
+                    } else {
+                        attendance.departureLogId?.let { db.attendanceLogs().deleteById(it) }
+                        attendance.copy(
+                            departureAt = null,
+                            departureMethod = null,
+                            departureAdminId = null,
+                            departureNote = null,
+                            departureSignature = null,
+                            departureEdited = false,
+                            departureLogId = null,
+                            updatedAt = System.currentTimeMillis(),
+                        )
+                    }
+                    if (cleared.arrivalAt == null && cleared.departureAt == null) {
+                        db.attendance().delete(cleared.id)
+                    } else {
+                        db.attendance().upsert(cleared)
+                    }
+                }
+                Unit
+            }
+        }
+    }
+
+    suspend fun removeSewadar(sewadarId: Long) {
+        db.sewadars().deactivate(listOf(sewadarId))
     }
 
     /** Identities for the roster, so a report can include people who did no sewa. */
@@ -209,7 +544,68 @@ class SewaRepository(private val db: SewaDatabase) {
 
     suspend fun exportRows(from: LocalDate, to: LocalDate): List<ExportRow> =
         db.attendance().exportRows(SewaDays.format(from), SewaDays.format(to))
+
+    private suspend fun writeManualLog(
+        existingLogId: Long?,
+        sewadarId: Long,
+        sewaDate: String,
+        departmentId: Long?,
+        eventType: AttendanceDirection,
+        at: Long,
+        signature: String?,
+        edited: Boolean,
+        method: String?,
+        adminId: String?,
+        note: String?,
+    ): Long {
+        val existingLog = if (edited && existingLogId != null) {
+            db.attendanceLogs().find(existingLogId)
+        } else {
+            null
+        }
+        if (existingLog != null) {
+            db.attendanceLogs().update(
+                existingLog.copy(
+                    departmentId = departmentId,
+                    eventType = eventType.name,
+                    verificationMethod = method ?: existingLog.verificationMethod,
+                    deviceTime = at,
+                    signature = signature ?: existingLog.signature,
+                    adminOverride = existingLog.adminOverride || method == ADMIN_OVERRIDE,
+                    adminId = adminId?.trim()?.ifBlank { null } ?: existingLog.adminId,
+                    note = note?.trim()?.ifBlank { null } ?: existingLog.note,
+                ),
+            )
+            return existingLog.id
+        }
+        return db.attendanceLogs().insert(
+            AttendanceLogEntity(
+                clientLogId = UUID.randomUUID().toString(),
+                sewadarId = sewadarId,
+                sewaDate = sewaDate,
+                departmentId = departmentId,
+                eventType = eventType.name,
+                verificationMethod = method ?: MANUAL_METHOD,
+                deviceTime = at,
+                signature = signature,
+                adminOverride = method == ADMIN_OVERRIDE,
+                adminId = adminId?.trim()?.ifBlank { null },
+                note = note?.trim()?.ifBlank { null },
+            ),
+        )
+    }
+
+    private companion object {
+        const val ADMIN_OVERRIDE = "ADMIN_OVERRIDE"
+        const val FACE_METHOD = "FACE"
+        const val MANUAL_METHOD = "MANUAL"
+    }
 }
+
+data class FaceAttendanceRecorded(
+    val direction: AttendanceDirection,
+    val deviceTime: Long,
+)
 
 /** What an import actually changed, reported back so nothing happens invisibly. */
 data class ImportResult(

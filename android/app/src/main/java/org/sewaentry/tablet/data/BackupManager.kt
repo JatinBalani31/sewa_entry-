@@ -1,12 +1,16 @@
 package org.sewaentry.tablet.data
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
@@ -22,6 +26,7 @@ import java.time.format.DateTimeFormatter
 object BackupManager {
 
     private const val DB_NAME = "sewa-entry.db"
+    private const val CURRENT_DATABASE_VERSION = 6
 
     private val TIMESTAMP_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm")
 
@@ -33,19 +38,32 @@ object BackupManager {
      * Call from a background thread.
      */
     fun backupTo(context: Context, uri: Uri) {
+        withSanitizedBackup(context) { backupFile ->
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                FileInputStream(backupFile).use { it.copyTo(out) }
+            } ?: throw IllegalStateException("Could not open the chosen location for writing.")
+        }
+    }
+
+    fun <T> withSanitizedBackup(context: Context, action: (File) -> T): T {
         val db = SewaDatabase.get(context)
-        // Checkpoint: flush the WAL into the main database file so the copy
-        // is self-contained. Room keeps the connection open, so this is safe.
-        // execSQL refuses anything that returns rows, and a checkpoint pragma
-        // reports how much it moved - so it has to be run as a query.
         db.openHelper.writableDatabase
             .query("PRAGMA wal_checkpoint(TRUNCATE)")
             .use { it.moveToFirst() }
 
         val dbFile = context.getDatabasePath(DB_NAME)
-        context.contentResolver.openOutputStream(uri)?.use { out ->
-            FileInputStream(dbFile).use { it.copyTo(out) }
-        } ?: throw IllegalStateException("Could not open the chosen location for writing.")
+        val backupFile = File.createTempFile("sewa-entry-backup-", ".db", context.cacheDir)
+        try {
+            FileInputStream(dbFile).use { input ->
+                FileOutputStream(backupFile).use { output -> input.copyTo(output) }
+            }
+            removeFaceTemplates(backupFile)
+            return action(backupFile)
+        } finally {
+            backupFile.delete()
+            File(backupFile.path + "-wal").delete()
+            File(backupFile.path + "-shm").delete()
+        }
     }
 
     /**
@@ -66,17 +84,57 @@ object BackupManager {
             throw IllegalArgumentException("That file is not a valid database backup.")
         }
 
-        // Close Room so we can overwrite the file.
-        SewaDatabase.close()
+        val bytes = header + stream.use { it.readBytes() }
+        restoreDatabaseBytes(context, bytes)
+    }
 
-        val dbFile = context.getDatabasePath(DB_NAME)
-        FileOutputStream(dbFile).use { out ->
-            out.write(header, 0, read)
-            stream.use { it.copyTo(out) }
+    /** Replaces the Room file after the containing backup package is verified. */
+    fun restoreDatabaseBytes(context: Context, bytes: ByteArray) {
+        require(bytes.size >= 16 && String(bytes, 0, 15).startsWith("SQLite format 3")) {
+            "That file does not contain a valid SQLite database."
         }
-
-        // Delete WAL and SHM so Room opens the restored file cleanly.
+        val dbFile = context.getDatabasePath(DB_NAME)
+        val candidate = File.createTempFile("sewa-restore-", ".db", context.cacheDir)
+        try {
+            FileOutputStream(candidate).use { it.write(bytes) }
+            SQLiteDatabase.openDatabase(candidate.absolutePath, null, SQLiteDatabase.OPEN_READONLY).use { checkDb ->
+                val integrity = checkDb.rawQuery("PRAGMA integrity_check", null).use { cursor ->
+                    cursor.moveToFirst() && cursor.getString(0) == "ok"
+                }
+                require(integrity) { "The backup database is damaged and was not restored." }
+                val version = checkDb.rawQuery("PRAGMA user_version", null).use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getInt(0) else 0
+                }
+                require(version in 1..CURRENT_DATABASE_VERSION) { "This backup database version is not supported by this app." }
+            }
+            SewaDatabase.close()
+            try {
+                Files.move(candidate.toPath(), dbFile.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(candidate.toPath(), dbFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            candidate.delete()
+        }
         File(dbFile.path + "-wal").delete()
         File(dbFile.path + "-shm").delete()
+    }
+
+    private fun removeFaceTemplates(backupFile: File) {
+        val backupDb = SQLiteDatabase.openDatabase(
+            backupFile.absolutePath,
+            null,
+            SQLiteDatabase.OPEN_READWRITE,
+        )
+        backupDb.use { db ->
+            val hasFaceTemplates = db.rawQuery(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'face_templates'",
+                null,
+            ).use { it.moveToFirst() }
+            if (hasFaceTemplates) {
+                db.delete("face_templates", null, null)
+            }
+            db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { it.moveToFirst() }
+        }
     }
 }

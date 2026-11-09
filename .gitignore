@@ -19,3 +19,6 @@ android/.gradle/
 android/local.properties
 android/.idea/
 *.apk
+
+# Local Gradle user home
+.gradle-user-home/
